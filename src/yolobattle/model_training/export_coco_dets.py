@@ -1,4 +1,4 @@
-# src/chocolatechip/model_training/export_coco_dets.py
+# src/yolobattle/model_training/export_coco_dets.py
 from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List, Any

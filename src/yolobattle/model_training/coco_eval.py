@@ -1,4 +1,4 @@
-# src/chocolatechip/model_training/coco_eval.py
+# src/yolobattle/model_training/coco_eval.py
 from __future__ import annotations
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval

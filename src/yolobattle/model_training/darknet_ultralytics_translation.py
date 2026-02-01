@@ -1,4 +1,4 @@
-# src/chocolatechip/model_training/darknet_ultralytics_translation.py
+# src/yolobattle/model_training/darknet_ultralytics_translation.py
 from __future__ import annotations
 from pathlib import Path
 from glob import glob

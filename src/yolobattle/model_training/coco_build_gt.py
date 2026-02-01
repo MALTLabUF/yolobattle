@@ -1,4 +1,4 @@
-# src/chocolatechip/model_training/coco_build_gt.py
+# src/yolobattle/model_training/coco_build_gt.py
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
