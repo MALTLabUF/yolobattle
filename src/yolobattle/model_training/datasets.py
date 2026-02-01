@@ -90,7 +90,7 @@ def _promote_sets_to_root(root: Path, src: Path, spec) -> None:
 def _download(url: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     _eprint(f"[download] {url} -> {dest}")
-    req = Request(url, headers={"User-Agent": "chocolatechip-datasets/1.0"})
+    req = Request(url, headers={"User-Agent": "yolobattle-datasets/1.0"})
     with urlopen(req) as r, open(dest, "wb") as f:
         total = r.length if hasattr(r, "length") else None
         copied = 0
@@ -259,7 +259,7 @@ def ensure_splits(spec: DatasetSpec) -> None:
 
     if getattr(spec, "flat_dir", None):
         cmd = [
-            sys.executable, "-m", "chocolatechip.model_training.dataset_setup",
+            sys.executable, "-m", "yolobattle.model_training.dataset_setup",
             "--root", str(root),
             "--flat-dir", spec.flat_dir,
             "--classes", str(spec.classes),
@@ -273,7 +273,7 @@ def ensure_splits(spec: DatasetSpec) -> None:
         all_sets = list(set(spec.sets) | set(getattr(spec, "neg_subdirs", []) or []))
         all_sets.sort()  # deterministic CLI ordering
         cmd = [
-            sys.executable, "-m", "chocolatechip.model_training.dataset_setup",
+            sys.executable, "-m", "yolobattle.model_training.dataset_setup",
             "--root", str(root),
             "--sets", *all_sets,
             "--classes", str(spec.classes),

@@ -13,25 +13,25 @@ import yaml
 from cloudmesh.common.StopWatch import StopWatch
 from cloudmesh.gpu.gpu import Gpu
 
-from chocolatechip.model_training.hw_info import (
+from yolobattle.model_training.hw_info import (
     summarize_env, resolve_gpu_selection, fio_seq_rw, get_disk_info, cpu_threads_used
 )
-from chocolatechip.model_training.cfg_maker import generate_cfg_file
-from chocolatechip.model_training.profiles import TrainProfile, get_profile, equalize_for_split
-from chocolatechip.model_training.darknet_ultralytics_translation import build_ultralytics_cmd
-from chocolatechip.model_training.dataset_setup import make_split, IMG_EXTS
+from yolobattle.model_training.cfg_maker import generate_cfg_file
+from yolobattle.model_training.profiles import TrainProfile, get_profile, equalize_for_split
+from yolobattle.model_training.darknet_ultralytics_translation import build_ultralytics_cmd
+from yolobattle.model_training.dataset_setup import make_split, IMG_EXTS
 
-from chocolatechip.model_training.evaluators_darknet import (
+from yolobattle.model_training.evaluators_darknet import (
     parse_darknet_summary
 )
-from chocolatechip.model_training.evaluators_ultra import (
+from yolobattle.model_training.evaluators_ultra import (
     find_ultra_results_csv,
     parse_ultra_map,
     count_from_data_yaml,
     parse_ultra_final_val,
 )
 
-from chocolatechip.model_training.datasets import ensure_download_once
+from yolobattle.model_training.datasets import ensure_download_once
 
 WRITABLE_BASE = Path(os.environ.get("WRITABLE_BASE", "/workspace/.cache/splits"))
 
@@ -670,10 +670,10 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
 
     # === External COCO evaluation (framework-agnostic, no env vars) ===
     try:
-        from chocolatechip.model_training.export_coco_dets import (
+        from yolobattle.model_training.export_coco_dets import (
             export_ultra_detections, export_darknet_detections
         )
-        from chocolatechip.model_training.coco_eval import (
+        from yolobattle.model_training.coco_eval import (
             coco_eval_bbox
         )
 
@@ -685,7 +685,7 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
 
 
         # 2) build COCO GT deterministically from DatasetSpec
-        from chocolatechip.model_training.coco_gt_dispatch import build_coco_gt_for_dataset
+        from yolobattle.model_training.coco_gt_dispatch import build_coco_gt_for_dataset
 
         gt_json = os.path.join(output_dir, "val.coco.gt.json")
 
@@ -761,7 +761,7 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
     # --- Confusion matrix at deployment operating point (dataset-agnostic CSV) ---
     try:
         if gt_json and det_json:
-            from chocolatechip.model_training.confusion_eval import compute_confusion_from_coco
+            from yolobattle.model_training.confusion_eval import compute_confusion_from_coco
             cm = compute_confusion_from_coco(
                 gt_json,
                 det_json,

@@ -1,4 +1,4 @@
-# src/chocolatechip/model_training/evaluators_ultra.py
+# src/yolobattle/model_training/evaluators_ultra.py
 from __future__ import annotations
 from pathlib import Path
 import csv, os, yaml

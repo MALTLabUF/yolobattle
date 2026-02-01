@@ -1,4 +1,4 @@
-# src/chocolatechip/model_training/evaluators_darknet.py
+# src/yolobattle/model_training/evaluators_darknet.py
 from __future__ import annotations
 from pathlib import Path
 import os, re, subprocess

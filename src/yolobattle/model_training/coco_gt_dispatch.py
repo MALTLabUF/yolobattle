@@ -1,6 +1,6 @@
 from pathlib import Path
-from chocolatechip.model_training.coco_build_gt import build_coco_gt
-from chocolatechip.model_training.profiles import DatasetSpec
+from yolobattle.model_training.coco_build_gt import build_coco_gt
+from yolobattle.model_training.profiles import DatasetSpec
 
 def build_coco_gt_for_dataset(*, dataset: DatasetSpec, valid_list: Path, out_json: Path) -> None:
     if not valid_list.is_file():
