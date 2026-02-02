@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+coverage.xml
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+ENV*/
+
+# Tooling
+.python-version
+.env
+.env.*
+
+# Project outputs
+artifacts/
+.yolobattle/
+*.log
+*.zip
+
+# OS
+.DS_Store
+Thumbs.db

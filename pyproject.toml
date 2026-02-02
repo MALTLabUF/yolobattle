@@ -1,0 +1,25 @@
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "yolobattle"
+version = "0.1.0"
+description = "YOLO training and benchmarking tools"
+authors = ["J.P. Fleischer <70083705+jpfleischer@users.noreply.github.com>"]
+readme = "README.md"
+license = "Apache-2.0"
+packages = [{ include = "yolobattle", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+cloudmesh-common = "^5.0.60"
+cloudmesh-gpu = { git = "https://github.com/cloudmesh/cloudmesh-gpu.git" }
+PyYAML = "^6.0.2"
+Pillow = "^11.1.0"
+pycocotools = "^2.0.7"
+docker = "^7.1.0"
+spython = "^0.3.1"
+
+[tool.poetry.scripts]
+yolobattle = "yolobattle.console:main"
