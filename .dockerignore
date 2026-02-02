@@ -1,0 +1,12 @@
+artifacts/
+
+# ignore the big bind-mount workspace
+.yolobattle/workspace/
+
+# keep the dockerfile directory (don’t ignore it)
+# (no need for negation if you only ignore workspace)
+
+.git/
+__pycache__/
+*.pyc
+.venv/

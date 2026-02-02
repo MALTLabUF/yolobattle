@@ -1,0 +1,25 @@
+Bootstrap: docker
+From: nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
+
+%environment
+    export DEBIAN_FRONTEND=noninteractive
+    export PATH="/usr/local/cuda/bin:/usr/local/bin:/opt/venv/bin:${PATH}"
+    export LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
+    export PYTHONPATH="/opt/app/src:${PYTHONPATH}"
+
+%files
+    docker/darknet/build_darknet.sh    /usr/local/bin/build_darknet.sh
+    src                                /opt/app/
+
+%post
+    apt-get update && apt-get install -y build-essential git libopencv-dev file cmake python3-pip python3-venv fio
+    python3 -m venv /opt/venv
+    . /opt/venv/bin/activate
+    pip install --upgrade pip
+    pip install cloudmesh-common PyYAML Pillow pycocotools imagesize git+https://github.com/cloudmesh/cloudmesh-gpu.git
+    mkdir -p /workspace /outputs /workspace/.cache/splits
+    chmod +x /usr/local/bin/build_darknet.sh
+
+%runscript
+    /usr/local/bin/build_darknet.sh
+    exec bash -lc "python -u -m yolobattle.model_training.train $@"
