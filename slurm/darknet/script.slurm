@@ -17,4 +17,4 @@ if [ -f /etc/profile.d/modules.sh ]; then
   module -q avail apptainer 2>/dev/null && module load apptainer || true
 fi
 
-python -m yolobattle apptainer run --profile LegoGearsDarknet --stream
+python -u -m yolobattle apptainer run --profile LegoGearsDarknet

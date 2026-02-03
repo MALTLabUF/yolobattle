@@ -60,14 +60,11 @@ def _chdir(path: Path):
 def _client():
     if Client is None:
         raise SystemExit("Python package 'spython' is not installed. Install with: pip install spython")
-    try:
-        if not Client.check_install():
-            raise SystemExit(
-                "Singularity/Apptainer CLI not found. "
-                "spython expects a 'singularity' command in PATH."
-            )
-    except Exception as exc:
-        raise SystemExit(f"Singularity/Apptainer check failed: {exc}")
+    if shutil.which("singularity") is None and shutil.which("apptainer") is None:
+        raise SystemExit(
+            "Singularity/Apptainer CLI not found in PATH. "
+            "Install Apptainer or ensure 'singularity' is available."
+        )
     return Client
 
 
@@ -156,6 +153,7 @@ def _run_image(args: argparse.Namespace) -> None:
     src_target = "/opt/app/src"
     binds = [
         f"{workspace_dir}:/workspace",
+        f"{workspace_dir}:/host_workspace",
         f"{outputs_dir}:/outputs",
         f"{src_dir}:{src_target}",
     ]
@@ -166,6 +164,7 @@ def _run_image(args: argparse.Namespace) -> None:
     client.setenv("TRUE_USER", os.environ.get("USERNAME") or os.environ.get("USER") or "unknown")
     client.setenv("ACTUAL_PWD", str(Path.cwd()))
     client.setenv("WRITABLE_BASE", "/workspace/.cache/splits")
+    client.setenv("DARKNET_PARENT", "/host_workspace")
 
     args_list = ["--profile", args.profile] + (args.train_args or [])
 
@@ -225,9 +224,9 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument("--fakeroot", action="store_true", help="Use --fakeroot when auto-building.")
     run.add_argument("--force", action="store_true", help="Overwrite existing image when auto-building.")
     run.add_argument("--no-gpu", action="store_true", help="Disable --nv.")
-    run.add_argument("--stream", action="store_true", help="Stream run output.")
+    run.add_argument("--no-stream", dest="stream", action="store_false", help="Disable streaming output.")
     run.add_argument("train_args", nargs=argparse.REMAINDER, help="Args passed to train module.")
-    run.set_defaults(func=_run_image)
+    run.set_defaults(func=_run_image, stream=True)
 
     slurm = subparsers.add_parser("slurm", help="Submit a Slurm job for Apptainer.")
     slurm.add_argument("--backend", default=None, help="Override backend (darknet|ultralytics).")
