@@ -3,6 +3,7 @@ From: ultralytics/ultralytics:latest
 
 %environment
     export DEBIAN_FRONTEND=noninteractive
+    export TZ=America/New_York
     export PATH="/usr/local/bin:${PATH}"
     export PYTHONPATH="/opt/app/src:${PYTHONPATH}"
     export DATA_ROOT="/workspace/.cache/datasets"
@@ -12,8 +13,12 @@ From: ultralytics/ultralytics:latest
 
 %post
     set -eux
+    export DEBIAN_FRONTEND=noninteractive
+    export TZ=America/New_York
+    ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime
+    echo "America/New_York" > /etc/timezone
     apt-get update
-    apt-get install -y --no-install-recommends fio
+    apt-get install -y --no-install-recommends tzdata fio
     rm -rf /var/lib/apt/lists/*
 
     python -m pip install --no-cache-dir --upgrade pip
@@ -30,4 +35,4 @@ From: ultralytics/ultralytics:latest
     chmod -R a+rwX /workspace /outputs /ultralytics/.cache /workspace/.cache
 
 %runscript
-    exec bash -lc "python -u -m yolobattle.model_training.train $@"
+    exec python -u -m yolobattle.model_training.train "$@"
