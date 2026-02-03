@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -202,6 +203,14 @@ def _handle_build_event(event: dict) -> None:
         raise SystemExit(event["error"])
 
 
+def _clean_darknet_workspace(workspace_dir: Path, enabled: bool) -> None:
+    if not enabled:
+        return
+    target = workspace_dir / "darknet"
+    if target.is_dir():
+        shutil.rmtree(target)
+
+
 def _print_build_logs(logs) -> None:
     buffer = ""
     for chunk in logs:
@@ -329,6 +338,7 @@ def _run_container(args: argparse.Namespace) -> None:
     src_dir = (root / "src").resolve()
     if not src_dir.is_dir():
         raise SystemExit(f"Missing src directory at {src_dir}")
+    _clean_darknet_workspace(workspace_dir, backend == "darknet" and not args.no_clean)
 
     if args.build or not _image_exists(client, image):
         if not _image_exists(client, image):
@@ -467,6 +477,7 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument("--profile", default="LegoGearsDarknet", help="Training profile name.")
     run.add_argument("--gpus", default="all", help="GPU selection (all|0,1|device=0,1).")
     run.add_argument("--backend", default=None, help="Override backend (darknet|ultralytics).")
+    run.add_argument("--no-clean", action="store_true", help="Do not delete /workspace/darknet before run.")
     run.add_argument(
         "--shm-size",
         default=None,

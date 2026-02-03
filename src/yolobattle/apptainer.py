@@ -94,6 +94,14 @@ def _stream_lines(stream) -> None:
             sys.stdout.write("\n")
 
 
+def _clean_darknet_workspace(workspace_dir: Path, enabled: bool) -> None:
+    if not enabled:
+        return
+    target = workspace_dir / "darknet"
+    if target.is_dir():
+        shutil.rmtree(target)
+
+
 def _build_image(args: argparse.Namespace) -> Path:
     client = _client()
     backend = _resolve_backend(profile=None, backend=args.backend)
@@ -149,6 +157,7 @@ def _run_image(args: argparse.Namespace) -> None:
     src_dir = (root / "src").resolve()
     workspace_dir.mkdir(parents=True, exist_ok=True)
     outputs_dir.mkdir(parents=True, exist_ok=True)
+    _clean_darknet_workspace(workspace_dir, backend == "darknet" and not args.no_clean)
 
     src_target = "/opt/app/src"
     binds = [
@@ -224,6 +233,7 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument("--fakeroot", action="store_true", help="Use --fakeroot when auto-building.")
     run.add_argument("--force", action="store_true", help="Overwrite existing image when auto-building.")
     run.add_argument("--no-gpu", action="store_true", help="Disable --nv.")
+    run.add_argument("--no-clean", action="store_true", help="Do not delete /workspace/darknet before run.")
     run.add_argument("--no-stream", dest="stream", action="store_false", help="Disable streaming output.")
     run.add_argument("train_args", nargs=argparse.REMAINDER, help="Args passed to train module.")
     run.set_defaults(func=_run_image, stream=True)
