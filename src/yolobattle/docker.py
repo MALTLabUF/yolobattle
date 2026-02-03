@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -117,10 +118,36 @@ def _default_uid_gid() -> tuple[int, int]:
 
 
 def _windows_disk_env() -> dict[str, str]:
+    if os.name != "nt":
+        return {}
     env: dict[str, str] = {}
     for key in ("WINDOWS_HARD_DRIVE", "WINDOWS_HARD_DRIVE_CAPACITY"):
         if os.environ.get(key):
             env[key] = os.environ[key]
+    if env.get("WINDOWS_HARD_DRIVE") and env.get("WINDOWS_HARD_DRIVE_CAPACITY"):
+        return env
+
+    def _wmic_value(field: str) -> str | None:
+        try:
+            output = subprocess.check_output(
+                ["wmic", "diskdrive", "where", "DeviceID like '%PHYSICALDRIVE0%'", "get", field],
+                text=True,
+            )
+        except Exception:
+            return None
+        lines = [ln.strip() for ln in output.splitlines() if ln.strip()]
+        for ln in lines:
+            if ln.lower() == field.lower():
+                continue
+            return ln
+        return None
+
+    model = _wmic_value("Model")
+    size = _wmic_value("Size")
+    if model:
+        env["WINDOWS_HARD_DRIVE"] = model
+    if size:
+        env["WINDOWS_HARD_DRIVE_CAPACITY"] = size
     return env
 
 
