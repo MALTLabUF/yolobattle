@@ -1,4 +1,4 @@
-.PHONY: run down logs slurm-darknet slurm-ultra
+.PHONY: run down logs slurm-darknet slurm-ultra slurm
 
 run:
 	yolobattle docker run --profile LegoGearsDarknet
@@ -12,14 +12,14 @@ down:
 logs:
 	yolobattle docker logs --follow
 
-slurm-darknet:
+slurm:
 	yolobattle apptainer slurm --backend darknet
 
 slurm-ultra:
 	yolobattle apptainer slurm --backend ultralytics
 
-slurm:
-	yolobattle apptainer run --profile LegoGearsDarknet
+#slurm:
+#	yolobattle apptainer run --profile LegoGearsDarknet
 
 
 pip:
