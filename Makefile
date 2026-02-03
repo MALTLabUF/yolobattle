@@ -20,3 +20,7 @@ slurm-ultra:
 
 slurm:
 	yolobattle apptainer run --profile LegoGearsDarknet
+
+
+pip:
+	pip install -e .
