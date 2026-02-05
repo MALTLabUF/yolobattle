@@ -6,6 +6,10 @@ run:
 ultra:
 	yolobattle docker run --profile LegoGearsUltra
 
+
+build:
+	yolobattle docker build
+
 down:
 	yolobattle docker stop
 
