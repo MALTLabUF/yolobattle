@@ -34,3 +34,17 @@ make slurm
 - `yolobattle apptainer build --backend darknet`
 - `yolobattle apptainer run --profile <PROFILE>`
 - `yolobattle apptainer slurm --backend darknet`
+- `yolobattle apptainer slurm --backend ultralytics --batch`
+
+## Slurm Batch (cloudmesh-ee API)
+
+- Requires `cloudmesh-ee` and `cloudmesh-rivanna` available in the Python environment (or source checkouts at `../cloudmesh-ee/src` and `../cloudmesh-rivanna/src`).
+- Default batch template/config:
+  - `slurm/<backend>/script.in.slurm`
+  - `slurm/<backend>/config.batch.yaml`
+- Generate and submit a batch:
+  - `yolobattle apptainer slurm --backend darknet --batch`
+- Generate only (no submit):
+  - `yolobattle apptainer slurm --backend ultralytics --batch --batch-no-submit`
+- Override config/source/output/name:
+  - `yolobattle apptainer slurm --backend ultralytics --batch --batch-config path/to/config.yaml --batch-source path/to/script.in.slurm --batch-output-dir project --batch-name chocolatechip_runs`
