@@ -133,7 +133,27 @@ def _clean_darknet_workspace(workspace_dir: Path, enabled: bool) -> None:
         return
     target = workspace_dir / "darknet"
     if target.is_dir():
-        shutil.rmtree(target)
+        try:
+            shutil.rmtree(target)
+        except FileNotFoundError:
+            # Parallel jobs can race on deletes; treat missing files as already cleaned.
+            pass
+
+
+def _workspace_dir(root: Path) -> Path:
+    """
+    Resolve the host workspace path.
+
+    Keep legacy shared workspace behavior by default, but isolate per Slurm job
+    to prevent parallel runs from deleting each other's build artifacts.
+    """
+    base = _state_dir(root)
+    suffix = os.environ.get("YOLOBATTLE_WORKSPACE_SUFFIX")
+    if not suffix:
+        suffix = os.environ.get("SLURM_JOB_ID")
+    if suffix:
+        return base / f"workspace_{suffix}"
+    return base / "workspace"
 
 
 def _normalize_train_args(train_args: list[str] | None) -> list[str]:
@@ -214,7 +234,7 @@ def _run_image(args: argparse.Namespace) -> None:
         )
         _build_image(build_args)
 
-    workspace_dir = _state_dir(root) / "workspace"
+    workspace_dir = _workspace_dir(root)
     outputs_dir = Path(args.outputs).resolve() if args.outputs else (root / "artifacts" / "outputs").resolve()
     src_dir = (root / "src").resolve()
     workspace_dir.mkdir(parents=True, exist_ok=True)
