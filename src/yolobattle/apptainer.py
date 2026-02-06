@@ -9,6 +9,8 @@ import sys
 from contextlib import contextmanager
 from pathlib import Path
 
+from cloudmesh.ee.experimentexecutor import ExperimentExecutor
+
 try:
     from spython.main import Client
 except Exception:
@@ -91,31 +93,6 @@ def _resolve_backend(profile: str | None, backend: str | None) -> str:
         except Exception:
             pass
     raise SystemExit("Could not resolve backend. Pass --backend darknet|ultralytics.")
-
-
-def _load_experiment_executor():
-    last_exc: Exception | None = None
-    try:
-        from cloudmesh.ee.experimentexecutor import ExperimentExecutor
-        return ExperimentExecutor
-    except Exception as first_exc:
-        last_exc = first_exc
-        root = _repo_root()
-        for base in (root.parent, root):
-            for repo in ("cloudmesh-rivanna", "cloudmesh-ee"):
-                candidate = base / repo / "src"
-                if candidate.is_dir() and str(candidate) not in sys.path:
-                    sys.path.insert(0, str(candidate))
-        try:
-            from cloudmesh.ee.experimentexecutor import ExperimentExecutor
-            return ExperimentExecutor
-        except Exception as import_exc:
-            last_exc = import_exc
-        raise SystemExit(
-            "cloudmesh-ee is required for --batch mode. Install it or place its source at "
-            "'../cloudmesh-ee/src' (plus cloudmesh-rivanna) or './cloudmesh-ee/src'. "
-            f"Import error: {type(last_exc).__name__}: {last_exc}"
-        ) from first_exc
 
 
 def _stream_lines(stream) -> None:
@@ -272,8 +249,6 @@ def _run_image(args: argparse.Namespace) -> None:
 
 
 def _generate_slurm_batch(args: argparse.Namespace, backend: str, root: Path) -> Path:
-    ExperimentExecutor = _load_experiment_executor()
-
     source = Path(args.batch_source).resolve() if args.batch_source else _slurm_batch_template_path(root, backend)
     config = Path(args.batch_config).resolve() if args.batch_config else _slurm_batch_config_path(root, backend)
     output_dir = Path(args.batch_output_dir).resolve()
