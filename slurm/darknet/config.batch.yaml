@@ -1,0 +1,16 @@
+system:
+  host: hipergator
+  dataset_root: null
+
+experiment:
+  # directive: "a100-80gb"
+  directive: "l4"
+  profile: ["LegoGearsDarknet"]
+  template: ["yolov7"]
+  val_frac: [0.10]
+  num_gpus: [1]
+  color_preset: [null]
+  repeat: [1,2]
+
+ee:
+  identifier: "{experiment.profile}_{experiment.template}_val{experiment.val_frac}_repeat{experiment.repeat}"
