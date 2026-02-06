@@ -38,7 +38,7 @@ make slurm
 
 ## Slurm Batch (cloudmesh-ee API)
 
-- Requires `cloudmesh-ee` and `cloudmesh-rivanna` available in the Python environment (or source checkouts at `../cloudmesh-ee/src` and `../cloudmesh-rivanna/src`).
+- Requires `cloudmesh-ee` and `cloudmesh-rivanna` installed in the active Python environment.
 - Default batch template/config:
   - `slurm/<backend>/script.in.slurm`
   - `slurm/<backend>/config.batch.yaml`
