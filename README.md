@@ -48,3 +48,16 @@ make slurm
   - `yolobattle apptainer slurm --backend ultralytics --batch --batch-no-submit`
 - Override config/source/output/name:
   - `yolobattle apptainer slurm --backend ultralytics --batch --batch-config path/to/config.yaml --batch-source path/to/script.in.slurm --batch-output-dir project --batch-name chocolatechip_runs`
+ 
+## Profiles 
+- LegoGearsDarknet
+- LegoGearsUltra
+- LeatherDarknet
+- LeatherUltra
+- FisheyeTrafficDarknetLocal
+- FisheyeTrafficDarknetLocalJPG
+- FisheyeTrafficUltralyticsLocal
+- CubesDarknet
+- CubesUltra
+- CardsDarknet
+- CardsUltra
