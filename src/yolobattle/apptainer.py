@@ -184,12 +184,12 @@ def _build_image(args: argparse.Namespace) -> Path:
             stream=args.stream,
         )
 
-        # For stream=True, spython returns a lazy stream object.
-        # Keep iteration inside repo-root cwd so %files relative paths resolve correctly.
-        if args.stream:
-            image_out, builder = result
-            _stream_lines(builder)
-            return Path(image_out)
+    # For stream=True, spython returns a lazy stream object.
+    # Keep iteration inside repo-root cwd so %files relative paths resolve correctly.
+    if args.stream:
+        image_out, builder = result
+        _stream_lines(builder)
+        return Path(image_out)
 
     return Path(result)
 
