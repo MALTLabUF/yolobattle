@@ -241,7 +241,7 @@ def build_ultralytics_cmd(*, profile, device_indices: list[int], run_dir: str) -
         seed_arg    = f"seed={rand_seed} "
         det_arg     = "deterministic=False "
         # let workers be something >0; or read from env
-        workers = os.environ.get("ULTRA_WORKERS", "8")
+        workers = os.environ.get("ULTRA_WORKERS", "2")
         workers_arg = f"workers={workers} "
 
     
