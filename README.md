@@ -11,8 +11,21 @@ make run
 ```
 
 ### HPC Environments
-``` 
+
+#### HiPerGator
+
+```bash 
 module load python/3.12
+python3 -m venv venv
+source venv/bin/activate
+make pip
+make slurm
+```
+
+#### Rivanna
+
+```bash
+module load miniforge/24.11.3-py3.12
 python3 -m venv venv
 source venv/bin/activate
 make pip
