@@ -17,10 +17,10 @@ logs:
 	yolobattle docker logs --follow
 
 slurm:
-	yolobattle apptainer slurm --backend darknet
+	yolobattle apptainer slurm --backend darknet --batch
 
 slurm-ultra:
-	yolobattle apptainer slurm --backend ultralytics
+	yolobattle apptainer slurm --backend ultralytics --batch
 
 #slurm:
 #	yolobattle apptainer run --profile LegoGearsDarknet
