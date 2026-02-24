@@ -4,10 +4,17 @@
 #SBATCH --error=yolobattle_train.out
 #SBATCH --cpus-per-task=8
 #SBATCH --time=1-00:00:00
+#SBATCH --mem=64gb
 {slurm.sbatch}
 
 set -euo pipefail
-cd "${SLURM_SUBMIT_DIR:-$PWD}"
+SUBMIT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
+REPO_ROOT="$(git -C "$SUBMIT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -n "$REPO_ROOT" ]]; then
+  cd "$REPO_ROOT"
+else
+  cd "$SUBMIT_DIR"
+fi
 
 if [ -f /etc/profile.d/modules.sh ]; then
   . /etc/profile.d/modules.sh
