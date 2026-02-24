@@ -1,13 +1,14 @@
 system:
   host: hipergator
+  #host: rivanna
   dataset_root: null
 
 experiment:
-  # directive: "a100-80gb"
   directive: "l4"
+  #directive: "a100-80gb"
   profile: ["LegoGearsDarknet"]
-  template: ["yolov7"]
-  val_frac: [0.10]
+  template: ["yolov7-tiny"]
+  val_frac: [0.15]
   num_gpus: [1]
   color_preset: [null]
   repeat: [1,2]
