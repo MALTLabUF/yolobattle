@@ -11,6 +11,10 @@ import re
 import pandas as pd
 import matplotlib.pyplot as plt
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[0] / "artifacts" / "plot"))
+from username_machine_pairings import get_machine
+
 # Preferred YOLO ordering for all plots
 PREFERRED_YOLO_ORDER = [
     "yolov3-tiny",
@@ -346,6 +350,14 @@ def average_by_cpu_gpu(df: pd.DataFrame) -> pd.DataFrame:
 # Plotting
 # ---------------------------------------------------------------------------
 
+MACHINE_COLORS = {
+    "HiPerGator (UF)": "blue",
+    "Afton (UVA)":     "orange",
+    "MALTLab":         "green",
+    "Personal Machine":"gray",
+}
+
+
 def plot_benchmark_time(averaged: pd.DataFrame, out_dir: Path) -> None:
     if BENCHMARK_TIME_COL not in averaged.columns:
         print(f"  [WARN] '{BENCHMARK_TIME_COL}' column not found, skipping plot.")
@@ -353,18 +365,42 @@ def plot_benchmark_time(averaged: pd.DataFrame, out_dir: Path) -> None:
 
     averaged = averaged.copy()
 
+    # Extract username from Working Dir (e.g. /home/username/... or /sfs/.../username/...)
+    def infer_username(row: pd.Series) -> str:
+        wd = str(row.get("Working Dir", ""))
+        # Try /home/username or /sfs/.../username pattern
+        m = re.search(r"/(?:home|users?)/([^/]+)", wd)
+        if m:
+            return m.group(1)
+        # Fallback: last path component before project folder
+        parts = [p for p in wd.split("/") if p]
+        if parts:
+            return parts[-2] if len(parts) >= 2 else parts[-1]
+        return ""
+
+    averaged["_username"] = averaged.apply(infer_username, axis=1)
+    averaged["_machine"] = averaged["_username"].apply(get_machine)
+    averaged["_color"]   = averaged["_machine"].map(MACHINE_COLORS).fillna("gray")
+
     # Build label: GPU on first line, CPU on second
     averaged["_label"] = averaged.apply(
         lambda r: f"{r['GPU Name']}\n{r['CPU Name']}", axis=1
     )
 
     # Sort greatest to least
-    plot_df = averaged[["_label", BENCHMARK_TIME_COL]].dropna()
+    plot_df = averaged[["_label", BENCHMARK_TIME_COL, "_color", "_machine"]].dropna(
+        subset=[BENCHMARK_TIME_COL]
+    )
     plot_df = plot_df.sort_values(BENCHMARK_TIME_COL, ascending=False).reset_index(drop=True)
 
     fig, ax = plt.subplots(figsize=(max(10, len(plot_df) * 1.6), 7))
 
-    bars = ax.bar(plot_df["_label"], plot_df[BENCHMARK_TIME_COL], color="steelblue", edgecolor="white")
+    bars = ax.bar(
+        plot_df["_label"],
+        plot_df[BENCHMARK_TIME_COL],
+        color=plot_df["_color"],
+        edgecolor="white",
+    )
 
     # Value labels on top of each bar
     for bar in bars:
@@ -378,11 +414,21 @@ def plot_benchmark_time(averaged: pd.DataFrame, out_dir: Path) -> None:
             fontsize=8,
         )
 
+    # Legend
+    seen = {}
+    for machine, color in MACHINE_COLORS.items():
+        if machine in plot_df["_machine"].values:
+            seen[machine] = color
+    legend_handles = [
+        plt.Rectangle((0, 0), 1, 1, color=c, label=m)
+        for m, c in seen.items()
+    ]
+    ax.legend(handles=legend_handles, title="Machine", loc="upper right")
+
     ax.set_title("yolov7-tiny — Average Benchmark Time by CPU / GPU", fontsize=13)
     ax.set_xlabel("")
     ax.set_ylabel("Benchmark Time (s)", fontsize=11)
 
-    # Slanted x-axis labels
     ax.set_xticks(range(len(plot_df)))
     ax.set_xticklabels(plot_df["_label"], rotation=45, ha="right", fontsize=8)
 
