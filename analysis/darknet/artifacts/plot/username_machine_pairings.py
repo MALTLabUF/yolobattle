@@ -11,5 +11,6 @@ def get_machine(username):
         "jpf": "MALTLab",
         "julian": "MALTLab",
         "ibraheem": "MALTLab",
+        "noah": "MALTLab",
     }
     return machine_map.get(username, "Personal Machine")

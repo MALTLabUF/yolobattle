@@ -199,7 +199,27 @@ def iter_benchmark_csvs(base_dirs: List[str]) -> Iterable[str]:
                     continue
                 if 'val80' in f:
                     continue
-                yield os.path.join(root, f)
+                
+                csv_path = os.path.join(root, f)
+                
+                # Check for training_output.log in the same directory
+                log_path = os.path.join(root, "training_output.log")
+                if not os.path.isfile(log_path):
+                    print(f"  [INVALID] Missing training_output.log: {root}")
+                    continue
+                
+                # Check if log contains the required completion string
+                try:
+                    with open(log_path, "r") as log_file:
+                        log_content = log_file.read()
+                        if "Training iteration has reached max batch limit" not in log_content:
+                            print(f"  [INVALID] Training did not complete: {root}")
+                            continue
+                except Exception as e:
+                    print(f"  [WARN] Could not read {log_path}: {e}")
+                    continue
+                
+                yield csv_path
 
 
 def infer_dataset_name_from_csv(csv_path: str) -> str:
@@ -332,19 +352,21 @@ def average_by_cpu_gpu(df: pd.DataFrame) -> pd.DataFrame:
     for k in AVERAGE_GROUP_KEYS:
         if k not in df.columns:
             raise KeyError(f"Required column '{k}' not found in compiled data.")
-
+    
     numeric_cols = df.select_dtypes(include="number").columns.tolist()
     non_numeric_cols = [
         c for c in df.columns
         if c not in numeric_cols and c not in AVERAGE_GROUP_KEYS
     ]
-
-    agg_numeric = df.groupby(AVERAGE_GROUP_KEYS, sort=False)[numeric_cols].mean()
+    
+    agg_numeric_mean = df.groupby(AVERAGE_GROUP_KEYS, sort=False)[numeric_cols].mean()
+    agg_numeric_min = df.groupby(AVERAGE_GROUP_KEYS, sort=False)[numeric_cols].min().add_suffix("_min")
+    agg_numeric_max = df.groupby(AVERAGE_GROUP_KEYS, sort=False)[numeric_cols].max().add_suffix("_max")
     agg_other = df.groupby(AVERAGE_GROUP_KEYS, sort=False)[non_numeric_cols].first()
-
-    averaged = pd.concat([agg_other, agg_numeric], axis=1).reset_index()
+    agg_count = df.groupby(AVERAGE_GROUP_KEYS, sort=False).size().rename("Number of Runs")
+    
+    averaged = pd.concat([agg_other, agg_numeric_mean, agg_numeric_min, agg_numeric_max, agg_count], axis=1).reset_index()
     return averaged
-
 
 # ---------------------------------------------------------------------------
 # Plotting
@@ -453,12 +475,22 @@ def main() -> None:
 
     print("Loading and compiling CSVs ...")
     compiled = load_and_compile_csvs(base)
-    print(f"  Compiled {len(compiled)} rows from benchmarks with "
+    print()
+    print(f"Compiled {len(compiled)} rows from benchmarks with "
           f"{VAL_FRACTION_COL}={VAL_FRACTION_TARGET}\n")
 
-    print("Averaging by CPU Name and GPU Name ...")
     averaged = average_by_cpu_gpu(compiled)
-    print(averaged.to_string(index=False))
+
+    benchmark_time_min = f"{BENCHMARK_TIME_COL}_min"
+    benchmark_time_max = f"{BENCHMARK_TIME_COL}_max"
+
+    if all(col in averaged.columns for col in [BENCHMARK_TIME_COL, benchmark_time_min, benchmark_time_max, "Number of Runs"]):
+        print("\nResults:")
+        for _, row in averaged.iterrows():
+            print(f"\nCPU: {row['CPU Name']}")
+            print(f"GPU: {row['GPU Name']}")
+            print(f"Benchmark Time (s): {row[benchmark_time_min]:.2f} / {row[BENCHMARK_TIME_COL]:.2f} / {row[benchmark_time_max]:.2f} (min / avg / max)")
+            print(f"Number of Runs: {int(row['Number of Runs'])}")
 
     csv_out = script_dir / "plot_common_averaged.csv"
     averaged.to_csv(csv_out, index=False)
