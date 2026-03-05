@@ -23,6 +23,54 @@ from plot_common import (
 from scipy import stats
 
 
+def _read_text_if_exists(path: str) -> str | None:
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            return f.read()
+    except Exception:
+        return None
+
+
+def _find_run_log_text(run_dir: str) -> tuple[str | None, str | None]:
+    """
+    Return (log_path, log_text) for a run directory.
+    Adjust the candidate filenames here if your ultralytics logs differ.
+    """
+    candidates = [
+        os.path.join(run_dir, "training_output.log"),
+        os.path.join(run_dir, "train.log"),
+        os.path.join(run_dir, "results.log"),
+    ]
+    for p in candidates:
+        txt = _read_text_if_exists(p)
+        if txt is not None:
+            return p, txt
+    return None, None
+
+
+def _is_completed_run_by_sentinel(run_dir: str, framework: str) -> bool:
+    log_path, log_text = _find_run_log_text(run_dir)
+    if not log_text:
+        print(f"  [INVALID] Missing readable log file in: {run_dir}")
+        return False
+
+    fw = (framework or "").lower().strip()
+    if fw == "darknet":
+        sentinel = "Training iteration has reached max batch limit"
+    else:
+        # ultralytics (or default)
+        sentinel = "epochs completed in"
+
+    if sentinel not in log_text:
+        print(f"  [INVALID] Sentinel not found ({fw}): {sentinel}")
+        print(f"           Log: {log_path}")
+        print(f"           Run: {run_dir}")
+        return False
+
+    return True
+
 def collect_confusion_records(base_dirs: List[str]) -> pd.DataFrame:
     """
     Walk one or more base_dirs, read benchmark__*.csv, and collect confusion totals
@@ -59,6 +107,10 @@ def collect_confusion_records(base_dirs: List[str]) -> pd.DataFrame:
             framework = "ultralytics"  # default
             if "darknet" in csv_path.lower() or "darknet" in root.lower():
                 framework = "darknet"
+
+            # ENFORCE COMPLETION SENTINEL (if enabled via flag passed into function)
+            if not _is_completed_run_by_sentinel(root, framework):
+                continue
 
             # Get Profile if available
             profile = "unknown"
