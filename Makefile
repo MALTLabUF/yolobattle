@@ -1,4 +1,4 @@
-.PHONY: run down logs slurm-darknet slurm-ultra slurm move
+.PHONY: run down logs slurm-darknet slurm-ultra slurm move repeat
 
 run:
 	yolobattle docker run --profile LegoGearsDarknet
@@ -37,3 +37,12 @@ move:
 	fi
 	@mkdir -p ../runs-yolobattle/outputs
 	@python tools/move_runs.py
+
+# Repeat sequential runs with nohup: default N=10, override with `make repeat N=5`
+#make repeat N=10 LOG=mylog.txt
+repeat:
+	@N=$${N:-10}; \
+	LOG=$${LOG:-repeat.log}; \
+	nohup sh -c 'i=1; while [ $$i -le '$$N' ]; do echo "Run $$i / '$$N'"; make run; i=$$((i+1)); done' \
+		> "$$LOG" 2>&1 &
+	@echo "Started in background with nohup. Log: $$LOG"
