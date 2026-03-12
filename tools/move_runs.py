@@ -82,7 +82,11 @@ def main() -> int:
 
     roots = [r for r in (SRC, PROJECT) if r.is_dir()]
     for root in roots:
-        for log_path in root.rglob("training_output.log"):
+        log_paths = list(root.rglob("training_output.log"))
+        for log_path in log_paths:
+            if not log_path.exists():
+                skipped += 1
+                continue
             run_dir = log_path.parent
 
             row = _read_first_row(run_dir)
