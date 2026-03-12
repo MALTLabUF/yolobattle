@@ -1,5 +1,7 @@
 .PHONY: run down logs slurm-darknet slurm-ultra slurm move repeat
 
+PY ?= python3
+
 run:
 	yolobattle docker run --profile LegoGearsDarknet
 
@@ -36,7 +38,7 @@ move:
 		exit 1; \
 	fi
 	@mkdir -p ../runs-yolobattle/outputs
-	@python tools/move_runs.py
+	@$(PY) tools/move_runs.py
 
 # Repeat sequential runs with nohup: default N=10, override with `make repeat N=5`
 #make repeat N=10 LOG=mylog.txt
