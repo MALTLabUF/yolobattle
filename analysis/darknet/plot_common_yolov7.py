@@ -308,7 +308,6 @@ def plot_benchmark_time_bar(averaged: pd.DataFrame, out_dir: Path) -> None:
     ]
     ax.legend(handles=legend_handles, title="Machine", loc="upper right", fontsize=12, title_fontsize=13)
   
-    ax.set_title("yolov7-tiny — Average Benchmark Time by CPU / GPU", fontsize=16, fontweight='bold')
     ax.set_xlabel("")
     ax.set_ylabel("Benchmark Time (s)", fontsize=14)
   
