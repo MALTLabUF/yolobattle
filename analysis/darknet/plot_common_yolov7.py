@@ -318,8 +318,8 @@ def plot_benchmark_time_bar(averaged: pd.DataFrame, out_dir: Path) -> None:
   
     plt.tight_layout()
   
-    out_path = out_dir / "plot_common_benchmark_time.png"
-    fig.savefig(out_path, dpi=150)
+    out_path = out_dir / "plot_common_benchmark_time.pdf"
+    fig.savefig(out_path)
     plt.close(fig)
     print(f"Plot saved to: {out_path}")
   
