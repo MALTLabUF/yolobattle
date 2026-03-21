@@ -27,6 +27,10 @@ PREFERRED_YOLO_ORDER = [
     "yolo11n",
     "yolo11s",
     "yolo11m",
+
+    "yolo26n",
+    "yolo26s",
+    "yolo26m"
 ]
 
 # Default fairness keys (shared across scripts)
