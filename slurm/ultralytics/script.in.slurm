@@ -11,10 +11,9 @@ set -euo pipefail
 SUBMIT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
 REPO_ROOT="$(git -C "$SUBMIT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
 if [[ -n "$REPO_ROOT" ]]; then
-  cd "$REPO_ROOT"
-else
-  cd "$SUBMIT_DIR"
+  export PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
 fi
+cd "$SUBMIT_DIR"
 
 if [ -f /etc/profile.d/modules.sh ]; then
   . /etc/profile.d/modules.sh
