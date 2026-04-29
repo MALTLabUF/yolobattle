@@ -343,6 +343,25 @@ def read_split_counts_from_data(data_path: str) -> Tuple[int, int]:
     except Exception:
         return 0, 0
 
+def _first_val_frac(p: TrainProfile) -> float | None:
+    vf_field = getattr(p, "val_fracs", None)
+    if isinstance(vf_field, (tuple, list)) and vf_field:
+        try:
+            return float(vf_field[0])
+        except Exception:
+            return None
+    if isinstance(vf_field, (int, float)):
+        return float(vf_field)
+    return None
+
+def _target_epochs_from_reference(profile: TrainProfile, reference_data_path: str | None) -> float | None:
+    if not reference_data_path:
+        return None
+    ref_train, _ = read_split_counts_from_data(reference_data_path)
+    if ref_train <= 0:
+        return None
+    return (profile.iterations * profile.batch_size) / float(ref_train)
+
 
 # ---------- one run ----------
 def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
@@ -938,7 +957,8 @@ if __name__ == "__main__":
 
     args = ap.parse_args()
 
-    p = get_profile(args.profile)
+    base_profile = get_profile(args.profile)
+    p = base_profile
 
     #cloudmesh ee
     overrides_used = False
@@ -1023,6 +1043,13 @@ if __name__ == "__main__":
         p = replace(p, dataset=ds)
 
 
+    darknet_reference_data_path: str | None = None
+    if p.backend == "darknet" and getattr(p, "dataset", None):
+        ref_vf = _first_val_frac(base_profile)
+        if ref_vf is not None:
+            darknet_reference_data_path, _ = build_split_for(ref_vf, p.dataset, out_dir=WRITABLE_BASE)
+            print(f"[equalize] reference split val_frac={ref_vf:.4f}")
+
     sweep_keys = tuple(getattr(p, "sweep_keys", ()) or ())
     if p.backend == "darknet" and sweep_keys:
         # build cartesian product of declared sweep variables
@@ -1050,7 +1077,13 @@ if __name__ == "__main__":
 
 
             # equalize per-template to keep epochs ~constant
-            p_variant = equalize_for_split(p_variant, data_path=data_path, mode="iterations")
+            target_epochs = _target_epochs_from_reference(p_variant, darknet_reference_data_path)
+            p_variant = equalize_for_split(
+                p_variant,
+                data_path=data_path,
+                mode="iterations",
+                target_epochs=target_epochs,
+            )
 
             # run it
             run_once(p=p_variant, template=p_variant.template, out_root=out_root, 
@@ -1059,10 +1092,17 @@ if __name__ == "__main__":
 
     elif p.backend == "darknet":
         # single Darknet run: still build/refresh split if using DatasetSpec
+        data_path = p.data_path
         if getattr(p, "dataset", None):
             vf = (p.val_fracs[0] if isinstance(p.val_fracs, (tuple, list)) else float(p.val_fracs))
             data_path, _ = build_split_for(vf, p.dataset, out_dir=WRITABLE_BASE)
-            p = replace(p, data_path=data_path)
+        target_epochs = _target_epochs_from_reference(p, darknet_reference_data_path)
+        p = equalize_for_split(
+            p,
+            data_path=data_path,
+            mode="iterations",
+            target_epochs=target_epochs,
+        )
         run_once(p=p, template=p.template or (p.templates[0] if p.templates else None), out_root=out_root,
             # flat_output=overrides_used,
         )
