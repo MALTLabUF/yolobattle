@@ -73,7 +73,8 @@ class TrainProfile:
 
 # ---------------- equalization helpers (profiles-level policy) ----------------
 
-# cache target_epochs per profile name so the first split sets the baseline
+# cache target epochs so the first encountered split sets a shared baseline
+# for each (profile, template, color_preset) group across val_fracs.
 _equalize_cache: Dict[tuple, float] = {}
 
 def _manifest_from_data_path(data_path: str) -> Path:
@@ -90,7 +91,13 @@ def read_split_counts_from_data(data_path: str) -> Tuple[int, int]:
     c = js.get("counts", {})
     return int(c.get("train_total", 0)), int(c.get("valid_total", 0))
 
-def equalize_for_split(profile: TrainProfile, *, data_path: str, mode: str = "iterations") -> TrainProfile:
+def equalize_for_split(
+    profile: TrainProfile,
+    *,
+    data_path: str,
+    mode: str = "iterations",
+    target_epochs: float | None = None,
+) -> TrainProfile:
     """
     Returns a new TrainProfile where either iterations or batch_size has been
     adjusted so that approx_epochs ≈ constant across splits.
@@ -111,31 +118,27 @@ def equalize_for_split(profile: TrainProfile, *, data_path: str, mode: str = "it
     if T <= 0:
         return replace(profile, data_path=data_path)
 
-    # Establish target epochs on first call for this profile name
-    # include val fraction in cache key so each split gets its own baseline
-    vf = None
-    vf_field = getattr(profile, "val_fracs", None)
-    if isinstance(vf_field, (tuple, list)) and vf_field:
+    if target_epochs is None:
+        # Establish target epochs on first call for this profile/template/color group.
+        # Intentionally do NOT include val_frac: this keeps approx epochs comparable
+        # across validation fractions by rescaling iterations with train-image count.
+        key = (
+            profile.name,
+            getattr(profile, "template", None),
+            getattr(profile, "color_preset", None),
+        )
+        if key not in _equalize_cache:
+            _equalize_cache[key] = (profile.iterations * profile.batch_size) / max(1, T)
+            if _equalize_cache[key] <= 0:
+                _equalize_cache[key] = 1.0
+        target_epochs = _equalize_cache[key]
+    else:
         try:
-            vf = float(vf_field[0])
+            target_epochs = float(target_epochs)
         except Exception:
-            vf = None
-    elif isinstance(vf_field, (int, float)):
-        vf = float(vf_field)
-
-    key = (
-        profile.name,
-        getattr(profile, "template", None),
-        getattr(profile, "color_preset", None),
-        vf,
-    )
-    
-    if key not in _equalize_cache:
-        _equalize_cache[key] = (profile.iterations * profile.batch_size) / max(1, T)
-        if _equalize_cache[key] <= 0:
-            _equalize_cache[key] = 1.0
-
-    target_epochs = _equalize_cache[key]
+            target_epochs = 1.0
+        if (not math.isfinite(target_epochs)) or target_epochs <= 0:
+            target_epochs = 1.0
 
     if mode == "iterations":
         new_iter = int(math.ceil(target_epochs * T / max(1, profile.batch_size)))
