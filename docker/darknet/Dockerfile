@@ -6,6 +6,8 @@ WORKDIR $APP_DIR
 # Create user that can match the host IDs (supplied at build time)
 ARG UID=1000
 ARG GID=1000
+LABEL org.yolobattle.uid="${UID}" \
+      org.yolobattle.gid="${GID}"
 RUN groupadd -g ${GID} appgroup \
  && useradd -m -u ${UID} -g ${GID} -s /bin/bash appuser
 

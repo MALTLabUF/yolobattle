@@ -23,6 +23,8 @@ DOCKERFILE_NAME = "Dockerfile"
 BUILD_SCRIPT_NAME = "build_darknet.sh"
 SUPPORTED_BACKENDS = {"darknet", "ultralytics"}
 DEFAULT_IMAGE = "yolobattle-container"
+UID_LABEL = "org.yolobattle.uid"
+GID_LABEL = "org.yolobattle.gid"
 
 
 def _repo_root() -> Path:
@@ -110,6 +112,15 @@ def _image_exists(client, image: str) -> bool:
         return False
     except DockerException:
         return False
+
+
+def _image_has_uid_gid(client, image: str, uid: int, gid: int) -> bool:
+    try:
+        img = client.images.get(image)
+    except (ImageNotFound, DockerException):
+        return False
+    labels = img.attrs.get("Config", {}).get("Labels") or {}
+    return labels.get(UID_LABEL) == str(uid) and labels.get(GID_LABEL) == str(gid)
 
 
 def _default_uid_gid() -> tuple[int, int]:
@@ -279,7 +290,7 @@ def _build_image(
     except ValueError:
         dockerfile_arg = dockerfile.as_posix()
 
-    print(f"[docker] build image={image} dockerfile={dockerfile_arg} context={root}")
+    print(f"[docker] build image={image} dockerfile={dockerfile_arg} context={root} uid={uid} gid={gid}")
     if dry_run:
         return
 
@@ -326,8 +337,9 @@ def _remove_container(client, name: str) -> None:
 def _run_container(args: argparse.Namespace) -> None:
     client = _docker_client()
     backend = _resolve_backend(profile=args.profile, backend=args.backend)
+    using_default_image = args.image == DEFAULT_IMAGE
     image = args.image
-    if image == DEFAULT_IMAGE:
+    if using_default_image:
         image = _default_image_tag(backend)
 
     root = _repo_root()
@@ -340,10 +352,16 @@ def _run_container(args: argparse.Namespace) -> None:
         raise SystemExit(f"Missing src directory at {src_dir}")
     _clean_darknet_workspace(workspace_dir, backend == "darknet" and not args.no_clean)
 
-    if args.build or not _image_exists(client, image):
-        if not _image_exists(client, image):
+    uid, gid = _default_uid_gid()
+    image_exists = _image_exists(client, image)
+    uid_gid_mismatch = using_default_image and image_exists and not _image_has_uid_gid(client, image, uid, gid)
+
+    if args.build or not image_exists or uid_gid_mismatch:
+        if not image_exists:
             print(f"Image '{image}' not found; building it first.")
-        _build_image(client=client, image=image, backend=backend, dry_run=args.dry_run)
+        elif uid_gid_mismatch:
+            print(f"Image '{image}' was built for a different UID/GID; rebuilding for {uid}:{gid}.")
+        _build_image(client=client, image=image, backend=backend, uid=uid, gid=gid, dry_run=args.dry_run)
 
     if args.dry_run:
         print(f"[docker] would run container name={args.name} image={image}")
