@@ -2,6 +2,8 @@ FROM ultralytics/ultralytics:latest
 
 ARG UID=1000
 ARG GID=1000
+LABEL org.yolobattle.uid="${UID}" \
+      org.yolobattle.gid="${GID}"
 RUN groupadd -g ${GID} appgroup \
  && useradd -m -u ${UID} -g ${GID} -s /bin/bash appuser
 
