@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import os, re, csv, glob, shutil, getpass, subprocess, zipfile, unicodedata, argparse
+import os, re, csv, glob, shutil, getpass, subprocess, zipfile, unicodedata, argparse, math
 from pathlib import Path
 from datetime import datetime
 from threading import Thread, Event
@@ -362,6 +362,14 @@ def _target_epochs_from_reference(profile: TrainProfile, reference_data_path: st
         return None
     return (profile.iterations * profile.batch_size) / float(ref_train)
 
+def _with_ultra_reference_epochs(profile: TrainProfile, reference_data_path: str | None) -> TrainProfile:
+    if profile.epochs is not None:
+        return profile
+    target_epochs = _target_epochs_from_reference(profile, reference_data_path)
+    if target_epochs is None:
+        return profile
+    return replace(profile, epochs=max(1, int(math.ceil(target_epochs))))
+
 
 # ---------- one run ----------
 def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
@@ -674,8 +682,7 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
     else:
         # Ultralytics
         train_count, valid_count = ultra_train_count, ultra_valid_count
-        # (optional) approx_epochs could be p.epochs if you want:
-        # approx_epochs = p.epochs
+        approx_epochs = p.epochs
 
 
     color_preset_for_csv = p.color_preset if p.color_preset is not None else "off"
@@ -1029,8 +1036,8 @@ if __name__ == "__main__":
         out_root = os.path.join(out_root_base, p.name)
         os.makedirs(out_root, exist_ok=True)
 
-    # --- make sure Darknet dataset exists at the expected path on first run ---
-    if p.backend == "darknet" and getattr(p, "dataset", None):
+    # --- make sure dataset exists at the expected path before split generation ---
+    if getattr(p, "dataset", None):
         ds = p.dataset
         base = Path(os.environ.get("DATA_ROOT", "/workspace"))
         root = Path(ds.root)
@@ -1043,11 +1050,11 @@ if __name__ == "__main__":
         p = replace(p, dataset=ds)
 
 
-    darknet_reference_data_path: str | None = None
-    if p.backend == "darknet" and getattr(p, "dataset", None):
+    reference_data_path: str | None = None
+    if p.backend in ("darknet", "ultralytics") and getattr(p, "dataset", None):
         ref_vf = _first_val_frac(base_profile)
         if ref_vf is not None:
-            darknet_reference_data_path, _ = build_split_for(ref_vf, p.dataset, out_dir=WRITABLE_BASE)
+            reference_data_path, _ = build_split_for(ref_vf, p.dataset, out_dir=WRITABLE_BASE)
             print(f"[equalize] reference split val_frac={ref_vf:.4f}")
 
     sweep_keys = tuple(getattr(p, "sweep_keys", ()) or ())
@@ -1077,7 +1084,7 @@ if __name__ == "__main__":
 
 
             # equalize per-template to keep epochs ~constant
-            target_epochs = _target_epochs_from_reference(p_variant, darknet_reference_data_path)
+            target_epochs = _target_epochs_from_reference(p_variant, reference_data_path)
             p_variant = equalize_for_split(
                 p_variant,
                 data_path=data_path,
@@ -1096,7 +1103,7 @@ if __name__ == "__main__":
         if getattr(p, "dataset", None):
             vf = (p.val_fracs[0] if isinstance(p.val_fracs, (tuple, list)) else float(p.val_fracs))
             data_path, _ = build_split_for(vf, p.dataset, out_dir=WRITABLE_BASE)
-        target_epochs = _target_epochs_from_reference(p, darknet_reference_data_path)
+        target_epochs = _target_epochs_from_reference(p, reference_data_path)
         p = equalize_for_split(
             p,
             data_path=data_path,
@@ -1117,10 +1124,26 @@ if __name__ == "__main__":
                 p_variant = p
                 for k, v in dict(zip(sweep_keys, combo)).items():
                     p_variant = _apply_one(p_variant, k, v)
+                if getattr(p_variant, "dataset", None):
+                    vf = (
+                        p_variant.val_fracs[0]
+                        if isinstance(p_variant.val_fracs, (tuple, list))
+                        else float(p_variant.val_fracs)
+                    )
+                    data_path, _ = build_split_for(vf, p_variant.dataset, out_dir=WRITABLE_BASE)
+                    yaml_path = str(Path(data_path).with_suffix(".yaml"))
+                    p_variant = replace(p_variant, data_path=data_path, ultra_data=yaml_path)
+                p_variant = _with_ultra_reference_epochs(p_variant, reference_data_path)
                 run_once(p=p_variant, template=None, out_root=out_root, 
                     # flat_output=overrides_used
                 )
         else:
+            if getattr(p, "dataset", None):
+                vf = (p.val_fracs[0] if isinstance(p.val_fracs, (tuple, list)) else float(p.val_fracs))
+                data_path, _ = build_split_for(vf, p.dataset, out_dir=WRITABLE_BASE)
+                yaml_path = str(Path(data_path).with_suffix(".yaml"))
+                p = replace(p, data_path=data_path, ultra_data=yaml_path)
+            p = _with_ultra_reference_epochs(p, reference_data_path)
             run_once(p=p, template=None, out_root=out_root,
                 # flat_output=overrides_used
             )
