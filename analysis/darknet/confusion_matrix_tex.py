@@ -505,7 +505,14 @@ def main():
                 )
             )
 
-            yolo_order = {"yolo11n": 1, "yolo11s": 2, "yolo11m": 3}
+            yolo_order = {
+                "yolo11n": 1,
+                "yolo11s": 2,
+                "yolo11m": 3,
+                "yolo26n": 4,
+                "yolo26s": 5,
+                "yolo26m": 6,
+            }
             leather_latex["yolo_sort"] = leather_latex["yolo_type"].map(yolo_order).fillna(0)
 
             leather_latex = leather_latex.sort_values(
@@ -612,7 +619,14 @@ def main():
                 )
             )
 
-            yolo_order = {"yolo11n": 1, "yolo11s": 2, "yolo11m": 3}
+            yolo_order = {
+                "yolo11n": 1,
+                "yolo11s": 2,
+                "yolo11m": 3,
+                "yolo26n": 4,
+                "yolo26s": 5,
+                "yolo26m": 6,
+            }
             other_latex["yolo_sort"] = other_latex["yolo_type"].map(yolo_order).fillna(0)
 
             other_latex = other_latex.sort_values(
