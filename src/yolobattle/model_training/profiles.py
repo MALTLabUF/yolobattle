@@ -314,6 +314,33 @@ PROFILES = {
         ),
     ),
 
+    "FisheyeTrafficDarknetLocalLRSweep": TrainProfile(
+        name="FisheyeTrafficDarknetLocalLRSweep",
+        backend="darknet",
+        data_path="/host_workspace/combined.data",      # <- write here
+        cfg_out="/host_workspace/combined.cfg",         # <- write here
+        width=960, height=736,
+        batch_size=64, subdivisions=16,
+        iterations=8000, learning_rate=0.0013,
+        templates=("yolov4", "yolov7"),
+        val_fracs=(0.10,),
+        sweep_keys=("templates", "learning_rate"),
+        sweep_values={
+            "learning_rate": (0.0010, 0.0013, 0.0020, 0.00261, 0.0040),
+        },
+        dataset=DatasetSpec(
+            root="/blue/ranka/j.fleischer/annotation_data",  # <- read-only
+            sets=tuple(),
+            classes=5,
+            names="obj.names",
+            prefix="combined",
+            split_seed=9001,
+            exts=(".jpg", ".png"),
+            require_existing=True,
+            flat_dir="darkmark_image_cache/resize",
+        ),
+    ),
+
     "FisheyeTrafficDarknetLocalJPG": TrainProfile(
         name="FisheyeTrafficDarknetLocalJPG",
         backend="darknet",

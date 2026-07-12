@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import shutil
 import subprocess
 import sys
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -159,6 +161,54 @@ def _run_sbatch(script: Path, extra: list[str] | None = None, cwd: Path | None =
         print(result.stdout.strip())
     if result.stderr:
         print(result.stderr.strip())
+
+
+def _slurm_job_name(script: Path) -> str | None:
+    try:
+        for line in script.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = line.strip()
+            if line.startswith("#SBATCH") and "--job-name=" in line:
+                return line.split("--job-name=", 1)[1].strip()
+    except Exception:
+        return None
+    return None
+
+
+def _active_slurm_job_names(user: str) -> set[str]:
+    squeue = shutil.which("squeue")
+    if squeue is None:
+        raise SystemExit("squeue not found in PATH; cannot use --max-active-jobs.")
+
+    result = subprocess.run(
+        [squeue, "-h", "-u", user, "-o", "%j"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
+def _wait_for_active_job_slot(job_names: set[str], max_active_jobs: int, poll_seconds: int = 30) -> None:
+    if max_active_jobs <= 0:
+        return
+
+    user = (
+        os.environ.get("SLURM_JOB_USER")
+        or os.environ.get("USER")
+        or os.environ.get("USERNAME")
+        or getpass.getuser()
+    )
+
+    while True:
+        active_job_names = _active_slurm_job_names(user)
+        active_count = sum(1 for name in job_names if name in active_job_names)
+        if active_count < max_active_jobs:
+            return
+        print(
+            f"Waiting for Slurm slot: {active_count} matching job(s) active, "
+            f"limit is {max_active_jobs}. Sleeping {poll_seconds}s."
+        )
+        time.sleep(poll_seconds)
 
 
 def _build_image(args: argparse.Namespace) -> Path:
@@ -333,7 +383,11 @@ def _generate_slurm_batch(args: argparse.Namespace, backend: str, root: Path) ->
     return name_path
 
 
-def _submit_generated_slurm_batch(manifest: Path, extra: list[str] | None = None) -> None:
+def _submit_generated_slurm_batch(
+    manifest: Path,
+    extra: list[str] | None = None,
+    max_active_jobs: int | None = None,
+) -> None:
     if not manifest.is_file():
         raise SystemExit(f"Batch manifest not found: {manifest}")
 
@@ -342,12 +396,23 @@ def _submit_generated_slurm_batch(manifest: Path, extra: list[str] | None = None
     if not experiments:
         raise SystemExit(f"No experiments in manifest: {manifest}")
 
+    job_names: set[str] = set()
+    for experiment in experiments.values():
+        directory = Path(experiment["directory"])
+        script_name = Path(experiment["script"]).name
+        script_path = directory / script_name
+        job_name = _slurm_job_name(script_path)
+        if job_name:
+            job_names.add(job_name)
+
     submitted = 0
     for exp_id, experiment in experiments.items():
         directory = Path(experiment["directory"])
         script_name = Path(experiment["script"]).name
         if not directory.is_dir():
             raise SystemExit(f"Experiment directory missing for '{exp_id}': {directory}")
+        if max_active_jobs is not None:
+            _wait_for_active_job_slot(job_names, max_active_jobs)
         _run_sbatch(Path(script_name), extra=extra, cwd=directory)
         submitted += 1
     print(f"Submitted {submitted} job(s) from: {manifest}")
@@ -362,7 +427,11 @@ def _submit_slurm(args: argparse.Namespace) -> None:
         if args.batch_no_submit:
             print("Batch generation complete; submission skipped (--batch-no-submit).")
             return
-        _submit_generated_slurm_batch(manifest=manifest, extra=args.extra)
+        _submit_generated_slurm_batch(
+            manifest=manifest,
+            extra=args.extra,
+            max_active_jobs=args.max_active_jobs,
+        )
         return
 
     script = Path(args.script).resolve() if args.script else _slurm_script_path(root, backend)
@@ -414,6 +483,12 @@ def main(argv: list[str] | None = None) -> None:
     slurm.add_argument("--batch-nocm", action="store_true", help="Do not merge cloudmesh variables into EE variables.")
     slurm.add_argument("--batch-no-submit", action="store_true", help="Generate batch scripts only; skip sbatch submission.")
     slurm.add_argument("--batch-verbose", action="store_true", help="Verbose cloudmesh-ee generation output.")
+    slurm.add_argument(
+        "--max-active-jobs",
+        type=int,
+        default=None,
+        help="When submitting a generated batch, wait so that at most this many matching jobs are active in Slurm at once.",
+    )
     slurm.add_argument("extra", nargs=argparse.REMAINDER, help="Extra args passed to sbatch.")
     slurm.set_defaults(func=_submit_slurm)
 
