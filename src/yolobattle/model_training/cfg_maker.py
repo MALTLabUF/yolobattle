@@ -335,7 +335,7 @@ def transform_cfg_from_text(template_text: str, *,
     set_net("height", height)
     set_net("batch", batch_size)
     set_net("subdivisions", subdivisions)
-    # set_net("learning_rate", f"{lr_used:.6f}")
+    set_net("learning_rate", f"{float(learning_rate):.6f}")
     set_net("max_batches", iterations)
 
     # Single knob controls HSV collectively; if None, preserve template values
