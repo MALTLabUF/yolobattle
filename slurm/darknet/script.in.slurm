@@ -25,6 +25,7 @@ PROFILE="{experiment.profile}"
 TEMPLATE="{experiment.template}"
 VAL_FRAC="{experiment.val_frac}"
 NUM_GPUS="{experiment.num_gpus}"
+LEARNING_RATE="{experiment.learning_rate}"
 COLOR_PRESET="{experiment.color_preset}"
 DATASET_ROOT="{system.dataset_root}"
 EE_REPEAT="{experiment.repeat}"
@@ -41,6 +42,10 @@ fi
 
 if [[ -n "$NUM_GPUS" && "$NUM_GPUS" != "None" && "$NUM_GPUS" != "null" ]]; then
   TRAIN_ARGS+=(--num-gpus "$NUM_GPUS")
+fi
+
+if [[ -n "$LEARNING_RATE" && "$LEARNING_RATE" != "None" && "$LEARNING_RATE" != "null" ]]; then
+  TRAIN_ARGS+=(--learning-rate "$LEARNING_RATE")
 fi
 
 if [[ -n "$COLOR_PRESET" && "$COLOR_PRESET" != "None" && "$COLOR_PRESET" != "null" ]]; then
