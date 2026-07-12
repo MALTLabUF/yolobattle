@@ -950,6 +950,7 @@ if __name__ == "__main__":
     ap.add_argument("--template", default=None, help="Darknet template override (e.g., yolov7-tiny)")
     ap.add_argument("--val-frac", type=float, default=None, help="Validation fraction override")
     ap.add_argument("--num-gpus", type=int, default=None, help="Request N GPUs")
+    ap.add_argument("--learning-rate", type=float, default=None, help="Learning rate override")
     ap.add_argument("--color-preset", default=None, help="Color preset override")
     ap.add_argument("--ultra-model", default=None, help="Ultralytics model override")
 
@@ -984,6 +985,10 @@ if __name__ == "__main__":
 
     if args.num_gpus is not None:
         p = replace(p, num_gpus=int(args.num_gpus))
+        overrides_used = True
+
+    if args.learning_rate is not None:
+        p = replace(p, learning_rate=float(args.learning_rate))
         overrides_used = True
 
     if args.color_preset is not None:

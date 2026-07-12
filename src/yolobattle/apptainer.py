@@ -352,6 +352,7 @@ def _generate_slurm_batch(args: argparse.Namespace, backend: str, root: Path) ->
     optional_defaults = {
         "val_frac": None,
         "num_gpus": None,
+        "learning_rate": None,
         "color_preset": None,
         "repeat": None,
     }
