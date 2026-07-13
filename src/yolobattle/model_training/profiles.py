@@ -235,7 +235,7 @@ PROFILES = {
         sweep_keys=("val_fracs", "num_gpus", "ultra_model"),
         sweep_values={
             "num_gpus": (1,),
-            "ultra_model": ("yolo11n.pt", "yolo11s.pt"),
+            "ultra_model": ("yolo11n.pt", "yolo11s.pt", "yolo26n.pt", "yolo26s.pt"),
         },
         dataset=DatasetSpec(
             root="LegoGears_v2",
