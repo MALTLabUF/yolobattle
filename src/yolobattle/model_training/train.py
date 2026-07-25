@@ -245,7 +245,7 @@ def build_split_for(vf: float, ds, out_dir: str | Path | None = None) -> tuple[s
 
     sets = None if getattr(ds, "flat_dir", None) else list(ds.sets)
 
-    # Default to legacy behavior if not provided
+    # Default to the existing adjacent-label split behavior if not provided.
     out_dir = Path(out_dir) if out_dir is not None else Path(ds.root)
 
     data_path, yaml_path = make_split(

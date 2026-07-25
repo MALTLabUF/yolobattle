@@ -4,10 +4,7 @@ import argparse, random, json, re
 from typing import Dict, List, Tuple
 import yaml
 
-try:
-    from .label_paths import label_path_for_image
-except ImportError:  # Supports direct execution of this module as a script.
-    from label_paths import label_path_for_image
+from .label_paths import label_path_for_image
 
 IMG_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff")
 

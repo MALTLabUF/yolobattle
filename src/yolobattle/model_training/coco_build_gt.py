@@ -5,10 +5,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Iterable
 import json
 
-try:
-    from .label_paths import label_path_for_image
-except ImportError:  # Supports direct execution of this module as a script.
-    from label_paths import label_path_for_image
+from .label_paths import label_path_for_image
 
 # We assume Pillow is installed (per your Dockerfiles)
 from PIL import Image
