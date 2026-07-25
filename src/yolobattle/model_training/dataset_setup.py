@@ -1,6 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
-import argparse, random, json, re
+import argparse, os, random, json, re, shutil
 from typing import Dict, List, Tuple
 import yaml
 
@@ -246,6 +246,54 @@ def collect_predefined_split(
         },
     }
 
+
+def project_paths_for_darknet(
+    image_paths: List[Path],
+    *,
+    out_dir: Path,
+    prefix: str,
+    split_name: str,
+) -> tuple[List[Path], bool]:
+    """Create a writable adjacent-label view when Darknet cannot find labels.
+
+    Darknet always derives an annotation as ``image.with_suffix('.txt')``.
+    Standard YOLO datasets place labels in a sibling ``labels`` directory
+    instead.  For those images, create symlinks in the writable split cache;
+    neither images nor annotations in the source dataset are changed.
+    """
+    needs_projection = any(
+        _label_path_for(image) != image.with_suffix(".txt")
+        for image in image_paths
+    )
+    if not needs_projection:
+        return image_paths, False
+
+    view_dir = out_dir / f"{prefix}_darknet_view" / split_name
+    view_dir.mkdir(parents=True, exist_ok=True)
+    projected: List[Path] = []
+
+    for index, image in enumerate(image_paths):
+        source_label = _label_path_for(image)
+        if not source_label.is_file():
+            raise FileNotFoundError(f"Missing label for Darknet projection: {image}")
+
+        # A numeric name avoids collisions between identically named images
+        # from different source directories while retaining the image suffix.
+        view_image = view_dir / f"{index:08d}{image.suffix.lower()}"
+        view_label = view_image.with_suffix(".txt")
+        for source, target in ((image, view_image), (source_label, view_label)):
+            if target.is_symlink() or target.exists():
+                target.unlink()
+            try:
+                target.symlink_to(source.resolve())
+            except OSError:
+                # Symlinks are expected on HPC.  The fallback keeps the
+                # function usable on filesystems where they are unavailable.
+                shutil.copy2(source, target)
+        projected.append(view_image)
+
+    return projected, True
+
 def choose_split_flat(
     all_imgs: List[Path],
     val_frac: float,
@@ -423,6 +471,8 @@ def make_split(root, sets, classes, names, prefix, val_frac, seed,
     # ----- write artifacts under out_dir -----
     train_file = out_dir / f"{prefix}_train.txt"
     valid_file = out_dir / f"{prefix}_valid.txt"
+    darknet_train_file = out_dir / f"{prefix}_darknet_train.txt"
+    darknet_valid_file = out_dir / f"{prefix}_darknet_valid.txt"
     data_file  = out_dir / f"{prefix}.data"
     manifest   = out_dir / f"{prefix}_split.json"
     yaml_file  = out_dir / f"{prefix}.yaml"
@@ -435,6 +485,18 @@ def make_split(root, sets, classes, names, prefix, val_frac, seed,
 
     write_list(train_file, train_paths)
     write_list(valid_file, valid_paths)
+    darknet_train_paths, projected_train = project_paths_for_darknet(
+        train_paths, out_dir=out_dir, prefix=prefix, split_name="train"
+    )
+    darknet_valid_paths, projected_valid = project_paths_for_darknet(
+        valid_paths, out_dir=out_dir, prefix=prefix, split_name="valid"
+    )
+    if projected_train or projected_valid:
+        write_list(darknet_train_file, darknet_train_paths)
+        write_list(darknet_valid_file, darknet_valid_paths)
+    else:
+        darknet_train_file = train_file
+        darknet_valid_file = valid_file
 
     # Preserve OLD manifest content (full `stats`), but ensure `counts` exists
     if "counts" not in stats:
@@ -445,14 +507,15 @@ def make_split(root, sets, classes, names, prefix, val_frac, seed,
     # Keep val_frac as an experiment tag, while the manifest makes clear that
     # predefined mode did not use it to choose any image.
     stats.setdefault("val_frac", val_frac)
+    stats["darknet_adjacent_label_view"] = bool(projected_train or projected_valid)
     manifest.write_text(json.dumps(stats, indent=2), encoding="utf-8")
 
     # Keep old .data semantics but make backup writable (out_dir)
     write_darknet_data_file(
         data_file,
         classes=classes,
-        train=train_file,
-        valid=valid_file,
+        train=darknet_train_file,
+        valid=darknet_valid_file,
         names=names_file,
         backup=out_dir,        # <-- was root_p before; avoid /blue writes
     )
