@@ -722,10 +722,14 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
             if not getattr(p, "dataset", None):
                 raise RuntimeError("COCO GT requires p.dataset")
 
+            data_fields = parse_darknet_data_file(p.data_path) if p.data_path else {}
+            generated_names = data_fields.get("names")
+
             build_coco_gt_for_dataset(
                 dataset=p.dataset,
                 valid_list=Path(output_dir) / "valid.txt",
                 out_json=Path(gt_json),
+                names_path=Path(generated_names) if generated_names else None,
             )
 
         export_thresh = 0.01  # fixed policy: 1% conf threshold for COCO export
