@@ -413,7 +413,7 @@ PROFILES = {
         width=1280, height=1280,
         batch_size=64, subdivisions=16,
         iterations=8000, learning_rate=0.00261,
-        templates=("yolov4-tiny", "yolov7-tiny"),
+        templates=("yolov4", "yolov7"),
         # This is only an experiment label; the actual validation set is the
         # supplied test split, not a 30% random sample.
         val_fracs=(0.30,),
