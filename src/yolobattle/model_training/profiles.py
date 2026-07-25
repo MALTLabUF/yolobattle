@@ -21,6 +21,13 @@ class DatasetSpec:
     sha256: str | None = None 
     # Do not create/download/normalize this dataset; fail fast if missing.
     require_existing: bool = False
+    # Optional supplied split.  These are paths relative to ``root`` and are
+    # used verbatim rather than making a random frame-level split.
+    predefined_train_dir: str | None = None
+    predefined_valid_dir: str | None = None
+    # Lets a read-only standard-YOLO dataset provide names without requiring
+    # an extra .names file next to the images.
+    class_names: Tuple[str, ...] = tuple()
 
 @dataclass(frozen=True)
 class TrainProfile:
@@ -393,6 +400,67 @@ PROFILES = {
         epochs=None,
         ultra_data="",
         ultra_model="yolo11n.pt"
+    ),
+
+    # FishEye8K ships an official camera-disjoint train/test split.  Do not
+    # replace it with a random frame split: adjacent frames from one camera
+    # are highly correlated and would leak into validation.
+    "FishEye8KDarknet": TrainProfile(
+        name="FishEye8KDarknet",
+        backend="darknet",
+        data_path="/workspace/.cache/splits/FishEye8K_official.data",
+        cfg_out="/workspace/FishEye8K.cfg",
+        width=1280, height=1280,
+        batch_size=64, subdivisions=16,
+        iterations=8000, learning_rate=0.00261,
+        templates=("yolov4-tiny", "yolov7-tiny"),
+        # This is only an experiment label; the actual validation set is the
+        # supplied test split, not a 30% random sample.
+        val_fracs=(0.30,),
+        sweep_keys=("templates", "num_gpus"),
+        sweep_values={"num_gpus": (1,)},
+        dataset=DatasetSpec(
+            # Official 2024-Jan archive, mounted from the shared Blue filesystem.
+            root="/blue/ranka/j.fleischer/Fisheye8K_all_including_trainandtest",
+            sets=tuple(),
+            classes=5,
+            names="FishEye8K.names",
+            prefix="FishEye8K_official",
+            exts=(".jpg", ".jpeg", ".png"),
+            require_existing=True,
+            predefined_train_dir="train/images",
+            predefined_valid_dir="test/images",
+            class_names=("Bus", "Bike", "Car", "Pedestrian", "Truck"),
+        ),
+    ),
+
+    "FishEye8KUltralytics": TrainProfile(
+        name="FishEye8KUltralytics",
+        backend="ultralytics",
+        data_path="",
+        cfg_out="",
+        width=1280, height=1280,
+        batch_size=64, subdivisions=16,
+        iterations=8000, learning_rate=0.00261,
+        val_fracs=(0.30,),
+        sweep_keys=("num_gpus",),
+        sweep_values={"num_gpus": (1,)},
+        dataset=DatasetSpec(
+            # Official 2024-Jan archive, mounted from the shared Blue filesystem.
+            root="/blue/ranka/j.fleischer/Fisheye8K_all_including_trainandtest",
+            sets=tuple(),
+            classes=5,
+            names="FishEye8K.names",
+            prefix="FishEye8K_official",
+            exts=(".jpg", ".jpeg", ".png"),
+            require_existing=True,
+            predefined_train_dir="train/images",
+            predefined_valid_dir="test/images",
+            class_names=("Bus", "Bike", "Car", "Pedestrian", "Truck"),
+        ),
+        epochs=None,
+        ultra_data="",
+        ultra_model="yolo11n.pt",
     ),
 
     "CubesDarknet": TrainProfile(

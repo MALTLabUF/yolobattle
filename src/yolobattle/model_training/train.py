@@ -260,6 +260,9 @@ def build_split_for(vf: float, ds, out_dir: str | Path | None = None) -> tuple[s
         exts=list(getattr(ds, "exts", IMG_EXTS)),
         flat_dir=getattr(ds, "flat_dir", None),
         legos=bool(getattr(ds, "legos", False)),
+        predefined_train_dir=getattr(ds, "predefined_train_dir", None),
+        predefined_valid_dir=getattr(ds, "predefined_valid_dir", None),
+        class_names=tuple(getattr(ds, "class_names", ())),
 
         # NEW: write outputs under out_dir (i.e., /host_workspace)
         out_dir=out_dir,
