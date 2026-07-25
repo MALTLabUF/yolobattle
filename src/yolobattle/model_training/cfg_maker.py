@@ -21,10 +21,7 @@ from typing import List, Tuple, Optional, Dict
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
 
-try:
-    from .label_paths import label_path_for_image
-except ImportError:  # Supports direct execution of this module as a script.
-    from label_paths import label_path_for_image
+from .label_paths import label_path_for_image
 
 
 TEMPLATE_URLS = {
