@@ -5,6 +5,11 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Iterable
 import json
 
+try:
+    from .label_paths import label_path_for_image
+except ImportError:  # Supports direct execution of this module as a script.
+    from label_paths import label_path_for_image
+
 # We assume Pillow is installed (per your Dockerfiles)
 from PIL import Image
 
@@ -256,7 +261,7 @@ def build_coco_gt_from_yolo_lists(
             "height": int(h),
         })
 
-        label = img.with_suffix(".txt")
+        label = label_path_for_image(img)
         if label.is_file():
             for ln in label.read_text(encoding="utf-8", errors="ignore").splitlines():
                 ln = ln.strip()

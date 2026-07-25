@@ -4,6 +4,11 @@ import argparse, random, json, re
 from typing import Dict, List, Tuple
 import yaml
 
+try:
+    from .label_paths import label_path_for_image
+except ImportError:  # Supports direct execution of this module as a script.
+    from label_paths import label_path_for_image
+
 IMG_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff")
 
 def collect_images_by_subdir(root: Path, subdirs: List[str], exts=IMG_EXTS) -> Dict[str, List[Path]]:
@@ -20,8 +25,7 @@ def collect_images_by_subdir(root: Path, subdirs: List[str], exts=IMG_EXTS) -> D
     return images
 
 def _label_path_for(img: Path) -> Path:
-    # always .txt regardless of image extension/case
-    return img.with_suffix(".txt")
+    return label_path_for_image(img)
 
 def _derive_ratio_tag_from_prefix(prefix: str) -> str | None:
     """
@@ -198,6 +202,53 @@ def collect_images_flat(root: Path, flat_dir: str, exts=IMG_EXTS) -> List[Path]:
         raise RuntimeError(f"No labeled images found in {p} (dropped={dropped})")
     return kept
 
+
+def collect_predefined_split(
+    root: Path,
+    train_dir: str,
+    valid_dir: str,
+    exts=IMG_EXTS,
+) -> tuple[List[Path], List[Path], dict]:
+    """Use a dataset's supplied train/validation directories without resplitting.
+
+    This is intended for benchmarks such as FishEye8K whose official split is
+    camera-disjoint.  Images are discovered recursively, so the same mechanism
+    also supports the common ``train/images/<scene>/...`` YOLO layout.
+    """
+    def labeled_images(relative_dir: str, split_name: str) -> tuple[List[Path], int]:
+        directory = (root / relative_dir).resolve()
+        if not directory.is_dir():
+            raise FileNotFoundError(f"Missing supplied {split_name} directory: {directory}")
+        images = [
+            path.resolve() for path in sorted(directory.rglob("*"))
+            if path.is_file() and path.suffix.lower() in exts
+        ]
+        kept = [path for path in images if _label_path_for(path).is_file()]
+        if not kept:
+            raise RuntimeError(f"No labeled images found in supplied {split_name} directory: {directory}")
+        return kept, len(images) - len(kept)
+
+    train, train_dropped = labeled_images(train_dir, "train")
+    valid, valid_dropped = labeled_images(valid_dir, "validation")
+    overlap = set(train) & set(valid)
+    if overlap:
+        raise RuntimeError(f"Supplied train/validation directories overlap ({len(overlap)} images).")
+
+    return train, valid, {
+        "mode": "predefined",
+        "details": {
+            "train_dir": train_dir,
+            "valid_dir": valid_dir,
+            "random_split_used": False,
+        },
+        "counts": {
+            "train_total": len(train),
+            "valid_total": len(valid),
+            "train_dropped_missing_label_total": train_dropped,
+            "valid_dropped_missing_label_total": valid_dropped,
+        },
+    }
+
 def choose_split_flat(
     all_imgs: List[Path],
     val_frac: float,
@@ -319,7 +370,10 @@ def choose_split_legos(
 
 
 def make_split(root, sets, classes, names, prefix, val_frac, seed,
-               neg_subdirs, exts, flat_dir, legos, out_dir: str | Path | None = None):
+               neg_subdirs, exts, flat_dir, legos, out_dir: str | Path | None = None,
+               predefined_train_dir: str | None = None,
+               predefined_valid_dir: str | None = None,
+               class_names: Tuple[str, ...] = tuple()):
     """
     Returns (data_path, yaml_path). Writes the same files as before, but
     into `out_dir` (writable); the dataset under `root` is read-only input.
@@ -337,8 +391,14 @@ def make_split(root, sets, classes, names, prefix, val_frac, seed,
     root_p.mkdir(parents=True, exist_ok=True)
     exts = [e.lower() for e in exts]
 
-    # ----- build train/valid exactly like before -----
-    if flat_dir:
+    # ----- build train/valid -----
+    if bool(predefined_train_dir) != bool(predefined_valid_dir):
+        raise ValueError("Both predefined_train_dir and predefined_valid_dir are required together.")
+    if predefined_train_dir and predefined_valid_dir:
+        train_paths, valid_paths, stats = collect_predefined_split(
+            root_p, predefined_train_dir, predefined_valid_dir, tuple(exts)
+        )
+    elif flat_dir:
         all_imgs = collect_images_flat(root_p, flat_dir, exts)
         train_paths, valid_paths, stats = choose_split_flat(
             all_imgs, val_frac=val_frac, seed=seed
@@ -369,7 +429,12 @@ def make_split(root, sets, classes, names, prefix, val_frac, seed,
     data_file  = out_dir / f"{prefix}.data"
     manifest   = out_dir / f"{prefix}_split.json"
     yaml_file  = out_dir / f"{prefix}.yaml"
-    names_file = root_p / names   # names lives with the dataset (read-only source)
+    names_file = root_p / names   # names normally lives with the dataset (read-only source)
+    if not names_file.is_file() and class_names:
+        # Standard YOLO datasets often do not include a Darknet .names file.
+        # Put the generated equivalent beside the other writable split files.
+        names_file = out_dir / Path(names).name
+        names_file.write_text("\n".join(class_names) + "\n", encoding="utf-8")
 
     write_list(train_file, train_paths)
     write_list(valid_file, valid_paths)
@@ -380,6 +445,8 @@ def make_split(root, sets, classes, names, prefix, val_frac, seed,
             "train_total": len(train_paths),
             "valid_total": len(valid_paths),
         }
+    # Keep val_frac as an experiment tag, while the manifest makes clear that
+    # predefined mode did not use it to choose any image.
     stats.setdefault("val_frac", val_frac)
     manifest.write_text(json.dumps(stats, indent=2), encoding="utf-8")
 

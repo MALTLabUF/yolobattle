@@ -21,6 +21,11 @@ from typing import List, Tuple, Optional, Dict
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
 
+try:
+    from .label_paths import label_path_for_image
+except ImportError:  # Supports direct execution of this module as a script.
+    from label_paths import label_path_for_image
+
 
 TEMPLATE_URLS = {
     "yolov7-tiny": "https://raw.githubusercontent.com/hank-ai/darknet/master/cfg/yolov7-tiny.cfg",
@@ -143,11 +148,6 @@ def read_train_list(train_list_path: Path) -> List[Path]:
         if ln and not ln.startswith("#"):
             imgs.append(Path(ln))
     return imgs
-
-def label_path_for_image(img_path: Path) -> Path:
-    p = img_path
-    stem = p.suffix and p.name[: -len(p.suffix)] or p.name
-    return p.with_name(stem + ".txt")
 
 def load_wh_from_labels(img_paths: List[Path], net_w: int, net_h: int, num_classes: int) -> Tuple[List[Tuple[float,float]], List[int], int]:
     wh_list: List[Tuple[float,float]] = []
