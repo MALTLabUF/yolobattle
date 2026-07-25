@@ -36,8 +36,23 @@ def _expected_dirs(spec) -> set[str]:
     """Dirs we must preserve & consider part of the dataset root."""
     return set(spec.sets) | set(getattr(spec, "neg_subdirs", []) or [])
 
+
+def _has_predefined_split(root: Path, spec) -> bool:
+    """Whether both directories of a supplied train/validation split exist."""
+    train_dir = getattr(spec, "predefined_train_dir", None)
+    valid_dir = getattr(spec, "predefined_valid_dir", None)
+    return bool(
+        train_dir
+        and valid_dir
+        and (root / train_dir).is_dir()
+        and (root / valid_dir).is_dir()
+    )
+
+
 def _looks_ready(root: Path, spec) -> bool:
     try:
+        if _has_predefined_split(root, spec):
+            return True
         # if a flat cache is specified, that's enough
         if getattr(spec, "flat_dir", None):
             if (root / spec.flat_dir).is_dir():
@@ -153,6 +168,8 @@ def ensure_download_once(spec: DatasetSpec, *, force: bool = False) -> Path:
         # Ok if either sets/flat_dir exist OR a .data file already exists
         def _has_expected():
             try:
+                if _has_predefined_split(root, spec):
+                    return True
                 if getattr(spec, "flat_dir", None) and (root / spec.flat_dir).is_dir():
                     return True
                 expected = set(spec.sets) | set(getattr(spec, "neg_subdirs", []) or [])
@@ -165,7 +182,7 @@ def ensure_download_once(spec: DatasetSpec, *, force: bool = False) -> Path:
         if not (_has_expected() or has_data):
             raise RuntimeError(
                 f"[local-only] dataset not ready at {root}. "
-                f"Expected sets/flat_dir present OR an existing .data file."
+                f"Expected a supplied train/validation split, sets/flat_dir, or an existing .data file."
             )
         _eprint(f"[ok] local-only dataset present at {root}")
         return root
