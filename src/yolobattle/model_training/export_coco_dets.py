@@ -2,7 +2,8 @@
 from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List, Any
-import argparse, json, subprocess, os
+import argparse, json, subprocess, os, sys
+import numpy as np
 
 from PIL import Image, ImageDraw
 from cloudmesh.common.StopWatch import StopWatch
@@ -512,11 +513,77 @@ def export_darknet_detections(
     )
 
 
+def export_tianxiaomo_detections(
+    *,
+    repo_path: str,
+    checkpoint: str,
+    cfg_path: str,
+    ann_json: str,
+    out_json: str,
+    images_txt: str,
+    width: int,
+    height: int,
+    conf: float = 0.001,
+    iou: float = 0.45,
+    device: str = "cuda",
+) -> None:
+    """Export Tianxiaomo PyTorch-YOLOv4 detections for the shared COCO evaluator."""
+    import cv2
+    import torch
+
+    repo = str(Path(repo_path).resolve())
+    if repo not in sys.path:
+        sys.path.insert(0, repo)
+    from tool.darknet2pytorch import Darknet
+    from tool.utils import nms_cpu
+
+    img_id_by_name, _ = _load_gt_index(ann_json)
+    checkpoint_data = torch.load(checkpoint, map_location="cpu")
+    model = Darknet(cfg_path, inference=True, width=width, height=height)
+    model.load_state_dict(checkpoint_data.get("model", checkpoint_data))
+    torch_device = torch.device(device if device != "cuda" or torch.cuda.is_available() else "cpu")
+    model.to(torch_device).eval()
+
+    detections: List[Dict[str, Any]] = []
+    for image_path in _read_images_list(images_txt, ann_json):
+        image = cv2.imread(image_path)
+        if image is None:
+            raise FileNotFoundError(f"Unable to read image {image_path}")
+        original_height, original_width = image.shape[:2]
+        model_input = cv2.cvtColor(cv2.resize(image, (width, height)), cv2.COLOR_BGR2RGB)
+        tensor = torch.from_numpy(model_input.transpose(2, 0, 1)).float().div(255.0).unsqueeze(0).to(torch_device)
+        with torch.no_grad():
+            boxes, class_scores = model(tensor)
+        boxes = boxes[0].reshape(-1, 4).cpu().numpy()
+        class_scores = class_scores[0].cpu().numpy()
+        classes = class_scores.argmax(axis=1)
+        scores = class_scores.max(axis=1)
+        image_id = img_id_by_name.get(Path(image_path).name)
+        if image_id is None:
+            continue
+        for class_id in np.unique(classes):
+            indices = np.where((classes == class_id) & (scores >= conf))[0]
+            if not len(indices):
+                continue
+            kept = nms_cpu(boxes[indices], scores[indices], iou)
+            for index in indices[kept]:
+                x1, y1, x2, y2 = np.clip(boxes[index], 0.0, 1.0)
+                detections.append({
+                    "image_id": int(image_id),
+                    "category_id": int(class_id),
+                    "bbox": [float(x1 * original_width), float(y1 * original_height),
+                             float((x2 - x1) * original_width), float((y2 - y1) * original_height)],
+                    "score": float(scores[index]),
+                })
+    Path(out_json).write_text(json.dumps(detections), encoding="utf-8")
+    print(f"[tianxiaomo_export] wrote {out_json} ({len(detections)} detections)")
+
+
 # ---------- CLI (optional) ----------
 
 def main():
     ap = argparse.ArgumentParser(description="Export COCO-format detections for COCOeval.")
-    ap.add_argument("--backend", required=True, choices=["ultralytics", "darknet"])
+    ap.add_argument("--backend", required=True, choices=["ultralytics", "darknet", "tianxiaomo"])
     ap.add_argument("--ann", required=True, help="COCO GT annotations JSON for *val*")
     ap.add_argument("--out_json", required=True, help="COCO results JSON to write")
     ap.add_argument("--images_txt", help="Optional TXT listing val images (else uses ann.images)")
@@ -538,6 +605,12 @@ def main():
     ap.add_argument("--dk_weights", help="darknet .weights")
     ap.add_argument("--letter_box", action="store_true", default=True)
     ap.add_argument("--no_letter_box", dest="letter_box", action="store_false")
+    # Tianxiaomo PyTorch-YOLOv4
+    ap.add_argument("--tian_repo")
+    ap.add_argument("--tian_checkpoint")
+    ap.add_argument("--tian_cfg")
+    ap.add_argument("--width", type=int)
+    ap.add_argument("--height", type=int)
     args = ap.parse_args()
 
     if args.backend == "ultralytics":
@@ -556,7 +629,7 @@ def main():
             save_vis=args.save_vis,
             vis_dir=args.vis_dir,
         )
-    else:
+    elif args.backend == "darknet":
         for req in ("data", "cfg", "dk_weights"):
             if getattr(args, req) is None:
                 ap.error(f"--{req} is required for backend=darknet")
@@ -575,6 +648,23 @@ def main():
             save_vis=args.save_vis,
             vis_dir=args.vis_dir,
             # optional: could also expose vis_scale / vis_conf_thresh as CLI flags later
+        )
+    else:
+        for req in ("tian_repo", "tian_checkpoint", "tian_cfg", "images_txt", "width", "height"):
+            if getattr(args, req) is None:
+                ap.error(f"--{req} is required for backend=tianxiaomo")
+        export_tianxiaomo_detections(
+            repo_path=args.tian_repo,
+            checkpoint=args.tian_checkpoint,
+            cfg_path=args.tian_cfg,
+            ann_json=args.ann,
+            out_json=args.out_json,
+            images_txt=args.images_txt,
+            width=args.width,
+            height=args.height,
+            conf=args.conf,
+            iou=args.iou,
+            device=args.device or "cuda",
         )
 
 if __name__ == "__main__":
