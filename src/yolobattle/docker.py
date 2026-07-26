@@ -21,7 +21,7 @@ except Exception:
 
 DOCKERFILE_NAME = "Dockerfile"
 BUILD_SCRIPT_NAME = "build_darknet.sh"
-SUPPORTED_BACKENDS = {"darknet", "ultralytics"}
+SUPPORTED_BACKENDS = {"darknet", "ultralytics", "pytorch_yolov4"}
 DEFAULT_IMAGE = "yolobattle-container"
 UID_LABEL = "org.yolobattle.uid"
 GID_LABEL = "org.yolobattle.gid"
@@ -52,6 +52,9 @@ def _template_paths(root: Path, backend: str) -> tuple[Path, Path | None]:
         template_dir = root / "docker" / "ultralytics"
         dockerfile = template_dir / DOCKERFILE_NAME
         return dockerfile, None
+    if backend == "pytorch_yolov4":
+        template_dir = root / "docker" / "pytorch_yolov4"
+        return template_dir / DOCKERFILE_NAME, None
     raise SystemExit(f"Unsupported backend: {backend}")
 
 
@@ -101,7 +104,7 @@ def _resolve_backend(profile: str | None, backend: str | None) -> str:
 
 
 def _default_image_tag(backend: str) -> str:
-    return f"yolobattle-{backend}"
+    return "yolobattle-pytorch-yolov4" if backend == "pytorch_yolov4" else f"yolobattle-{backend}"
 
 
 def _image_exists(client, image: str) -> bool:
@@ -373,7 +376,9 @@ def _run_container(args: argparse.Namespace) -> None:
         "TRUE_USER": os.environ.get("USERNAME") or os.environ.get("USER") or "unknown",
         "ACTUAL_PWD": str(Path.cwd()),
         "WRITABLE_BASE": "/workspace/.cache/splits",
-        "DATA_ROOT": "/workspace/.cache/datasets" if backend == "ultralytics" else "/workspace",
+        "DATA_ROOT": "/workspace/.cache/datasets"
+        if backend in {"ultralytics", "pytorch_yolov4"}
+        else "/workspace",
     }
     envs.update(_windows_disk_env())
     if args.darknet_ref:
@@ -386,14 +391,7 @@ def _run_container(args: argparse.Namespace) -> None:
             k, v = item.split("=", 1)
             envs[k] = v
 
-    train_cmd = [
-        "python",
-        "-u",
-        "-m",
-        "yolobattle.model_training.train",
-        "--profile",
-        args.profile,
-    ]
+    train_cmd = ["python", "-u", "-m", "yolobattle.model_training.train", "--profile", args.profile]
     if args.train_args:
         train_cmd.extend(args.train_args)
     train_cmd_str = _shell_join(train_cmd)
@@ -407,7 +405,11 @@ def _run_container(args: argparse.Namespace) -> None:
         shm_size = "8g"
     shm_bytes = _parse_shm_size(shm_size) if shm_size else None
 
-    src_target = "/ultralytics/src" if backend == "ultralytics" else "/opt/app/src"
+    src_target = (
+        "/ultralytics/src" if backend == "ultralytics"
+        else "/opt/pytorch-yolov4/src" if backend == "pytorch_yolov4"
+        else "/opt/app/src"
+    )
     volumes = {
         str(workspace_dir): {"bind": "/workspace", "mode": "rw"},
         str(outputs_dir): {"bind": "/outputs", "mode": "rw"},

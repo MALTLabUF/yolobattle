@@ -68,6 +68,9 @@ class TrainProfile:
     ultra_data: str = "LG_v2.yaml"
     ultra_model: str = "yolo11n.pt"
 
+    # Tianxiaomo/PyTorch-YOLOv4 only
+    pytorch_cfg: str = "cfg/yolov4-tiny.cfg"
+
     # ultralytics-only training RNG; ignored by Darknet
     training_seed: Optional[int] = None
 
@@ -260,6 +263,31 @@ PROFILES = {
         epochs=None,
         ultra_data="",
         ultra_model="yolo11n.pt",
+    ),
+    "LegoGearsPyTorchYOLOv4": TrainProfile(
+        name="LegoGearsPyTorchYOLOv4",
+        backend="pytorch_yolov4",
+        data_path="", cfg_out="",
+        # The repaired Tianxiaomo fork supports the native rectangular profile.
+        width=224, height=160,
+        batch_size=16, subdivisions=1,
+        iterations=7000, learning_rate=0.00261,
+        epochs=100,
+        val_fracs=(0.20,),
+        num_gpus=1,
+        pytorch_cfg="cfg/yolov4-tiny.cfg",
+        dataset=DatasetSpec(
+            root="LegoGears_v2",
+            sets=("set_01", "set_02_empty", "set_03"),
+            classes=5,
+            names="LegoGears.names",
+            prefix="LegoGears",
+            split_seed=9001,
+            neg_subdirs=("set_02_empty",),
+            exts=(".jpg",),
+            url="https://www.ccoderun.ca/programming/2024-05-01_LegoGears/legogears_2_dataset.zip",
+            sha256="126980d3e43986bbd3d785ac16f6430e9bf3b726e65a30574bb3c9ba06a4462e",
+        ),
     ),
 
     "LeatherUltra": TrainProfile(

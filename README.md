@@ -42,6 +42,33 @@ make slurm
 - `yolobattle docker build`
 - `yolobattle docker run --profile <PROFILE>`
 
+### PyTorch YOLOv4
+
+`pytorch_yolov4` is a first-class backend built from the repaired
+[jpfleischer/pytorch-YOLOv4](https://github.com/jpfleischer/pytorch-YOLOv4)
+fork. It uses the same `DatasetSpec` and split-generation path as Darknet and
+Ultralytics, then generates Tianxiaomo-format labels and a class-correct,
+rectangular cfg.
+
+```bash
+yolobattle docker build --backend pytorch_yolov4
+yolobattle docker run --profile LegoGearsPyTorchYOLOv4 --gpus 0
+```
+
+The image pins the fork revision and runs a 224×160 YOLOv4-tiny smoke test while
+building. Training outputs, including the generated split, cfg, logs, and
+resumable checkpoints, are written to `artifacts/outputs`. Darknet, Ultralytics,
+and this backend use the same 224×160 LegoGears geometry.
+
+### Benchmark backends
+
+Framework-specific logic lives in `model_training/backends.py`. A backend owns
+only preparation, its training command, native-log parsing, artifact lookup,
+and COCO detection export. The shared runner owns COCO ground truth, COCOeval,
+confusion matrices, benchmark CSV/YAML, and bundles. Add a backend by
+implementing that adapter contract and registering it; do not add framework
+branches to the shared benchmark stages.
+
 ## Apptainer
 
 - `yolobattle apptainer build --backend darknet`
