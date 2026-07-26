@@ -199,7 +199,7 @@ class TianxiaomoBackend:
         profile, cfg, train_labels, valid_labels = prepare(profile, output_dir)
         _copy_lists(profile.data_path, output_dir)
         command = shlex.join(build_command(profile, cfg, train_labels, valid_labels, output_dir))
-        return profile, command + " > " + shlex.quote(str(output_dir / "training_output.log")) + " 2>&1"
+        return profile, command + " 2>&1 | tee " + shlex.quote(str(output_dir / "training_output.log"))
 
     def native_metrics(self, profile, output_dir): return NativeMetrics(map_iou=0.50, map_points=101)
     def counts(self, profile, output_dir):
