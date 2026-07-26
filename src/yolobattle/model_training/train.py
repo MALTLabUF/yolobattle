@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import os, re, csv, glob, shutil, getpass, subprocess, zipfile, unicodedata, argparse, math
+import os, re, csv, getpass, subprocess, zipfile, unicodedata, argparse, math
 from pathlib import Path
 from datetime import datetime
 from threading import Thread, Event
@@ -16,22 +16,11 @@ from cloudmesh.gpu.gpu import Gpu
 from yolobattle.model_training.hw_info import (
     summarize_env, resolve_gpu_selection, fio_seq_rw, get_disk_info, cpu_threads_used
 )
-from yolobattle.model_training.cfg_maker import generate_cfg_file
 from yolobattle.model_training.profiles import TrainProfile, get_profile, equalize_for_split
-from yolobattle.model_training.darknet_ultralytics_translation import build_ultralytics_cmd
 from yolobattle.model_training.dataset_setup import make_split, IMG_EXTS
 
-from yolobattle.model_training.evaluators_darknet import (
-    parse_darknet_summary
-)
-from yolobattle.model_training.evaluators_ultra import (
-    find_ultra_results_csv,
-    parse_ultra_map,
-    count_from_data_yaml,
-    parse_ultra_final_val,
-)
-
 from yolobattle.model_training.datasets import ensure_download_once
+from yolobattle.model_training.backends import get_backend
 
 WRITABLE_BASE = Path(os.environ.get("WRITABLE_BASE", "/workspace/.cache/splits"))
 
@@ -85,158 +74,6 @@ def _color_token(p) -> str:
     if v in (None, "", "off"):
         return "__color_off"
     return f"__color_{slugify(str(v))}"
-
-
-def _count_lines(path: str) -> int:
-    try:
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            return sum(1 for ln in f if ln.strip())
-    except Exception:
-        return 0
-
-
-def copy_darknet_weights_into_output(p, output_dir: str) -> None:
-    """
-    Copy any relevant Darknet weights into this run's output directory.
-    We look in:
-      - directory of p.cfg_out
-      - WRITABLE_BASE (/workspace/.cache/splits) where Darknet actually saved
-    """
-    outp = Path(output_dir)
-    outp.mkdir(parents=True, exist_ok=True)
-
-    cfg_dir = Path(p.cfg_out).parent if getattr(p, "cfg_out", None) else Path(".")
-    splits_dir = Path(os.environ.get("WRITABLE_BASE", "/workspace/.cache/splits"))
-
-    stem = Path(p.cfg_out).stem if getattr(p, "cfg_out", None) else "weights"
-
-    candidates = [
-        splits_dir / f"{stem}_last.weights",
-        splits_dir / "last.weights",
-        cfg_dir / f"{stem}_last.weights",
-        cfg_dir / "last.weights",
-    ]
-
-
-    for src in candidates:
-        if src.is_file():
-            dst = outp / src.name
-            try:
-                shutil.copy2(src, dst)
-                print(f"[weights] copied {src} -> {dst}")
-            except Exception as e:
-                print(f"[weights] copy failed for {src}: {e}")
-
-
-
-def _find_darknet_weights_for_export(p) -> str | None:
-    """
-    Try to find the best/last weights in the usual places.
-    """
-    cfg_path = Path(p.cfg_out).resolve()
-    cfg_dir = cfg_path.parent
-    stem = cfg_path.stem  # e.g. "LegoGears"
-
-    # 1) where Darknet actually saved in your log
-    splits_dir = Path(os.environ.get("WRITABLE_BASE", "/workspace/.cache/splits"))
-
-    candidates = [
-        cfg_dir / f"{stem}_best.weights",
-        cfg_dir / "best.weights",
-        splits_dir / f"{stem}_best.weights",
-        splits_dir / "best.weights",
-        splits_dir / f"{stem}_last.weights",
-        splits_dir / "last.weights",
-        splits_dir / f"{stem}_final.weights",
-        splits_dir / "final.weights",
-    ]
-
-    for c in candidates:
-        if c.is_file():
-            print(f"[coco] using weights: {c}")
-            return str(c)
-
-    print("[coco] no weights found in cfg_dir or splits_dir; skipping export")
-    return None
-
-
-def read_ultra_counts(output_dir: str, yaml_path: str | None = None) -> tuple[int, int]:
-    """
-    Prefer the copies you already make: output_dir/train.txt and output_dir/valid.txt.
-    If missing, try to read paths from the Ultralytics dataset YAML.
-    """
-    train_txt = os.path.join(output_dir, "train.txt")
-    valid_txt = os.path.join(output_dir, "valid.txt")
-    if os.path.isfile(train_txt) or os.path.isfile(valid_txt):
-        return _count_lines(train_txt), _count_lines(valid_txt)
-
-    # Fallback: peek into YAML if provided and points to list files
-    try:
-        if yaml_path and os.path.isfile(yaml_path):
-            ydoc = yaml.safe_load(Path(yaml_path).read_text(encoding="utf-8"))
-            tr = ydoc.get("train"); va = ydoc.get("val")
-            if isinstance(tr, str) and os.path.isfile(tr) and tr.endswith(".txt"):
-                t = _count_lines(tr)
-            else:
-                t = 0
-            if isinstance(va, str) and os.path.isfile(va) and va.endswith(".txt"):
-                v = _count_lines(va)
-            else:
-                v = 0
-            return t, v
-    except Exception:
-        pass
-    return 0, 0
-
-
-# ---------- cfg generation (darknet) ----------
-def generate_cfg(p: TrainProfile, template: str) -> None:
-    print(f"[cfg] template={template} -> {p.cfg_out}")
-
-    # Hard-force multiscale ONLY for exact v7 templates.
-    # Everything else keeps template defaults.
-    rm = 1 if template in ("yolov7",) else None
-
-
-    generate_cfg_file(
-        template=template,
-        data_path=p.data_path,
-        out_path=p.cfg_out,
-        width=p.width, height=p.height,
-        batch_size=p.batch_size, subdivisions=p.subdivisions,
-        iterations=p.iterations, learning_rate=p.learning_rate,
-        anchor_clusters=None,
-        color_preset=p.color_preset,   # <- single, purposeful knob
-        random_multiscale=rm,
-    )
-
-
-def build_darknet_cmd(p: TrainProfile, gpus_str: str, *,
-                      map_thresh: float | None = None,
-                      iou_thresh: float | None = None,
-                      points: int | None = None) -> str:
-    dk = darknet_path()
-    # Prefer explicit kwargs; else profile; else default to 101
-    mt = map_thresh if map_thresh is not None else getattr(p, "map_thresh", None)
-    it = iou_thresh if iou_thresh is not None else getattr(p, "iou_thresh", None)
-    pts = (
-        points
-        if points is not None
-        else (getattr(p, "map_points", None) if hasattr(p, "map_points") else None)
-    )
-    if pts is None:
-        pts = 101  # <-- default to COCO-style 101 recall points
-
-    extras = []
-    if mt  is not None: extras += ["-thresh", f"{mt:.2f}"]
-    if it  is not None: extras += ["-iou_thresh", f"{it:.2f}"]
-    if pts is not None: extras += ["-points", str(pts)]
-    extra_str = (" " + " ".join(extras)) if extras else ""
-    return (
-        f"{dk} detector -map{extra_str} -dont_show -nocolor "
-        + (f"-gpus {gpus_str} " if gpus_str else "")
-        + f"train {p.data_path} {p.cfg_out} 2>&1 | tee training_output.log"
-    )
 
 
 def build_split_for(vf: float, ds, out_dir: str | Path | None = None) -> tuple[str, str]:
@@ -317,20 +154,6 @@ def _apply_one(p: TrainProfile, key: str, val: Any) -> TrainProfile:
     return p
 
 
-def parse_darknet_data_file(data_path: str) -> dict:
-    out = {}
-    if not data_path or not os.path.isfile(data_path):
-        return out
-    with open(data_path, "r", encoding="utf-8", errors="ignore") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if "=" in line:
-                k, v = line.split("=", 1)
-                out[k.strip()] = v.strip()
-    return out
-
 def split_manifest_from_data_path(data_path: str) -> Path:
     """'/.../LegoGears_v15.data' -> '/.../LegoGears_v15_split.json'"""
     p = Path(data_path)
@@ -377,6 +200,7 @@ def _with_ultra_reference_epochs(profile: TrainProfile, reference_data_path: str
 # ---------- one run ----------
 def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
              flat_output: bool = False) -> None:
+    backend = get_backend(p.backend)
     user = effective_username()
     now = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -413,7 +237,7 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
             size_token = f"__{p.width}x{p.height}"
 
     # One subdir per YOLO variant (template for Darknet, model name for Ultralytics)
-    yolo_variant_raw = (template if (p.backend == "darknet" and template) else p.ultra_model) or "unknown-model"
+    yolo_variant_raw = backend.model_label(p, template) or "unknown-model"
     yolo_variant_safe = slugify(Path(yolo_variant_raw).stem)
     
     base_tag = p.backend  # "darknet" or "ultralytics" (no template here)
@@ -476,33 +300,6 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
     os.chdir(output_dir)
     print(f"[out] {output_dir}")
 
-    if p.backend == "darknet":
-        assert template, "template required for darknet"
-        generate_cfg(p, template)
-
-        # --- stash a copy of the CFG for provenance ---
-        try:
-            src_cfg = Path(p.cfg_out).resolve()
-            dst_cfg = Path(output_dir) / src_cfg.name
-            if not (dst_cfg.exists() and os.path.samefile(src_cfg, dst_cfg)):
-                shutil.copy2(src_cfg, dst_cfg)
-            print(f"[cfg] copied {src_cfg} -> {dst_cfg}")
-        except Exception as e:
-            print(f"[cfg] copy failed: {e}")
-
-    # --- copy only the validation list into the output dir as valid.txt ---
-    if p.backend == "darknet" and p.data_path:
-        dd = parse_darknet_data_file(p.data_path)
-        valid_src = dd.get("valid")
-        if valid_src and os.path.isfile(valid_src):
-            try:
-                shutil.copy2(valid_src, os.path.join(output_dir, "valid.txt"))
-                print(f"[valid] copied {valid_src} -> {os.path.join(output_dir, 'valid.txt')}")
-            except Exception as e:
-                print(f"[valid] copy failed: {e}")
-        else:
-            print("[valid] no valid file found in .data")
-
     # GPU watcher (host-indexed for nvidia-smi)
     watch_log = os.path.join(output_dir, "mylogfile.log")
     stop_evt = Event()
@@ -538,71 +335,13 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
     # Train
     try:
         StopWatch.start("benchmark")
-        if p.backend == "darknet":
-            if getattr(p, "training_seed", None) is not None:
-                print("[seed] training_seed set but Darknet ignores training RNG; proceeding without it.")
-            # right before you call build_darknet_cmd(...) in run_once()
-            if p.backend == "darknet" and getattr(p, "map_points", None) is None:
-                p = replace(p, map_points=101)   # record the choice for provenance/CSV
-
-            cmd = build_darknet_cmd(p, gpus_str)
-        else:
-            # --- ensure dataset exists before making the split/YAML ---
-            if getattr(p, "dataset", None):
-                ds = p.dataset
-                root = Path(ds.root)
-                # anchor relative roots under a writable base (inside the container this is /workspace)
-                base = Path(os.environ.get("DATA_ROOT", "/workspace"))
-                if not root.is_absolute():
-                    ds = replace(ds, root=str((base / root).resolve()))
-                # download/extract/normalize once
-                ensure_download_once(ds)
-                # keep this normalized DatasetSpec on the profile for subsequent uses
-                p = replace(p, dataset=ds)
-
-            # existing code that builds the split + YAML
-            if getattr(p, "dataset", None) and (not p.ultra_data or not os.path.isfile(p.ultra_data)):
-                vf_field = getattr(p, "val_fracs", None)
-                if isinstance(vf_field, (list, tuple)) and vf_field:
-                    default_vf = float(vf_field[0])
-                elif isinstance(vf_field, (int, float)):
-                    default_vf = float(vf_field)
-                else:
-                    default_vf = 0.20  # fallback
-                data_path, _ = build_split_for(default_vf, p.dataset, out_dir=WRITABLE_BASE)
-                yaml_path = str(Path(data_path).with_suffix(".yaml"))
-                p = replace(p, ultra_data=yaml_path, data_path=data_path)
-
-                print(f"[ultra] using dataset YAML: {yaml_path}")
-
-                    # --- stash Ultralytics dataset artifacts for provenance ---
-            try:
-                ypath = Path(p.ultra_data).resolve()
-                # copy the YAML used
-                dst_yaml = Path(output_dir) / ypath.name
-                if not (dst_yaml.exists() and os.path.samefile(ypath, dst_yaml)):
-                    shutil.copy2(ypath, dst_yaml)
-                # read YAML to find train/val lists and copy them
-                ydoc = yaml.safe_load(ypath.read_text(encoding="utf-8"))
-                for key, outname in (("val", "valid.txt"), ("train", "train.txt")):
-                    src = ydoc.get(key)
-                    if isinstance(src, str) and os.path.isfile(src):
-                        shutil.copy2(src, Path(output_dir) / outname)
-                        print(f"[{key}] copied {src} -> {Path(output_dir) / outname}")
-                    else:
-                        # might be a list or glob; ignore silently
-                        pass
-            except Exception as e:
-                print(f"[ultra] provenance copy failed: {e}")
-
-            # after you possibly copy train/valid lists into output_dir
-            ultra_train_count, ultra_valid_count = read_ultra_counts(output_dir, p.ultra_data)
-
-
-            cmd = build_ultralytics_cmd(profile=p, device_indices=indices, run_dir=output_dir)
+        p, cmd = backend.prepare(p, template=template, output_dir=Path(output_dir),
+                                 gpu_indices=indices, gpus_str=gpus_str)
         print(f"[train] {cmd}")
-        subprocess.call(cmd, shell=True)
+        returncode = subprocess.call(cmd, shell=True)
         StopWatch.stop("benchmark")
+        if returncode:
+            raise RuntimeError(f"Training command failed with exit code {returncode}")
     finally:
         if t is not None:
             try:
@@ -633,59 +372,18 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
     prf = dict(prec=None, rec=None, f1=None)
     conf_thresh_eval = None
 
-    if p.backend == "darknet":
-        summary = parse_darknet_summary(os.path.join(output_dir, "training_output.log"))
-        map_iou        = summary.get("map_iou")
-        map_last_pct   = summary.get("last_map_pct")
-        map_best_pct   = summary.get("best_map_pct")
-        best_iter      = summary.get("best_iter")
-        conf_thresh_eval = summary.get("conf_thresh_eval")
-        prf["prec"]    = summary.get("prec")
-        prf["rec"]     = summary.get("rec")
-        prf["f1"]      = summary.get("f1")
-        map_points     = getattr(p, "map_points", None)
-
-        # ensure points shows up in CSV even if profile didn’t set it explicitly
-        if map_points is None:
-            map_points = 101
-
-    else:
-        # --- Ultralytics: prefer final 'Validating ... best.pt' block; fallback to results.csv ---
-        ultra_log = os.path.join(output_dir, "training_output.log")
-        m50_best, m95_best = parse_ultra_final_val(ultra_log)
-
-        if m50_best is None or m95_best is None:
-            csv_path = find_ultra_results_csv(output_dir)
-            if csv_path:
-                m50_best, m95_best = parse_ultra_map(csv_path)
-            else:
-                print("[ultra] results.csv not found; looked in run dir and train/ subdir")
-                m50_best, m95_best = (None, None)
-
-        map_last_pct = m50_best        # fill your "mAP (last %)" with the best.pt value
-        map_best_pct = None            # Ultralytics doesn't output a separate "best %" line like Darknet
-        map_iou      = 0.50
-        map_points   = 101             # Ultralytics uses 101-point PR integration
-        best_iter    = None
-        conf_thresh_eval = None
-
-        ultra_train_count, ultra_valid_count = (0, 0)
-        if getattr(p, "ultra_data", None):
-            ultra_train_count, ultra_valid_count = count_from_data_yaml(p.ultra_data)
+    native = backend.native_metrics(p, Path(output_dir))
+    map_last_pct, map_best_pct = native.map_last_pct, native.map_best_pct
+    map_iou, map_points, best_iter = native.map_iou, native.map_points, native.best_iter
+    conf_thresh_eval = native.conf_thresh
+    prf = dict(prec=native.precision, rec=native.recall, f1=native.f1)
 
 
     # --- dataset sizing & effective epochs (for CSV) ---
     train_count = valid_count = 0
     approx_epochs = None
 
-    if p.backend == "darknet" and p.data_path:
-        train_count, valid_count = read_split_counts_from_data(p.data_path)
-        if train_count > 0:
-            approx_epochs = (p.iterations * p.batch_size) / float(train_count)
-    else:
-        # Ultralytics
-        train_count, valid_count = ultra_train_count, ultra_valid_count
-        approx_epochs = p.epochs
+    train_count, valid_count, approx_epochs = backend.counts(p, Path(output_dir))
 
 
     color_preset_for_csv = p.color_preset if p.color_preset is not None else "off"
@@ -699,9 +397,6 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
 
     # === External COCO evaluation (framework-agnostic, no env vars) ===
     try:
-        from yolobattle.model_training.export_coco_dets import (
-            export_ultra_detections, export_darknet_detections
-        )
         from yolobattle.model_training.coco_eval import (
             coco_eval_bbox
         )
@@ -734,45 +429,10 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
 
         export_thresh = 0.01  # fixed policy: 1% conf threshold for COCO export
 
-        # 3) export detections to COCO results JSON
+        # 3) framework adapter exports detections using the common policy.
         det_json = os.path.join(output_dir, f"dets_{p.backend}.coco.json")
-        if p.backend == "darknet":
-            weights = _find_darknet_weights_for_export(p)
-            if not weights:
-                print("[coco] external COCO eval skipped: no weights to export")
-            else:
-                export_darknet_detections(
-                    darknet_bin=darknet_path(),
-                    data_path=p.data_path,
-                    cfg_path=p.cfg_out,
-                    weights_path=weights,
-                    ann_json=gt_json,
-                    out_json=det_json,
-                    images_txt=val_list,
-                    thresh=export_thresh,
-                    letter_box=False,
-                    save_vis=True,
-                    vis_dir=output_dir,
-                )
-
-        else:
-            # best.pt under Ultralytics run dir
-            best_pt = str((Path(output_dir) / "train" / "weights" / "best.pt"))
-            if not (hasattr(p, "width") and hasattr(p, "height")):
-                raise RuntimeError("TrainProfile must define width and height for fair export")
-            export_ultra_detections(
-                weights=best_pt,
-                ann_json=gt_json,
-                out_json=det_json,
-                images_txt=val_list,
-                conf=export_thresh,     # match Darknet export threshold for fairness
-                iou=0.45,        # NMS IoU
-                imgsz=(p.height, p.width),
-                device=indices,
-                batch=2,
-                save_vis=True,
-                vis_dir=output_dir,
-            )
+        backend.export_coco(p, output_dir=Path(output_dir), gt_json=gt_json, det_json=det_json,
+                            valid_list=val_list, threshold=export_thresh, gpu_indices=indices)
 
         coco_metrics = coco_eval_bbox(gt_json, det_json)
         coco_ap5095 = coco_metrics["AP"]
@@ -839,7 +499,7 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
     row = {
         "Backend": p.backend,
         "Profile": p.name,
-        "YOLO Template": template if (p.backend == "darknet" and template) else p.ultra_model,
+        "YOLO Template": backend.model_label(p, template),
         "Benchmark Time (s)": b["time"],
         "CPU Name": sysinfo["cpu"],
         "CPU Threads": sysinfo["cpu_threads"],
@@ -924,16 +584,7 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
         yaml.safe_dump(row, fy, sort_keys=False)
     print(f"[yaml] {yaml_name}")
 
-    # Move any Darknet weights (if present)
-    if p.backend == "darknet":
-        cfg_dir = os.path.dirname(p.cfg_out)
-        for f in glob.glob(os.path.join(cfg_dir, "*weights")):
-            try:
-                shutil.move(f, output_dir)
-            except Exception:
-                pass
-
-        copy_darknet_weights_into_output(p, output_dir)
+    backend.finalize(p, Path(output_dir))
 
 
     # Zip (exclude .weights)
@@ -1128,7 +779,7 @@ if __name__ == "__main__":
 
 
 
-    else:
+    elif p.backend == "ultralytics":
         # ultralytics: you can still declare sweep_keys for things like epochs/batch_size if you want
         if sweep_keys:
             grid_lists = [ _values_for_key(p, k) for k in sweep_keys ]
@@ -1159,3 +810,9 @@ if __name__ == "__main__":
             run_once(p=p, template=None, out_root=out_root,
                 # flat_output=overrides_used
             )
+    elif p.backend == "pytorch_yolov4":
+        # The adapter creates its own framework-specific split/labels in the
+        # output directory; the shared runner owns everything after training.
+        run_once(p=p, template=None, out_root=out_root)
+    else:
+        raise ValueError(f"Unsupported backend: {p.backend}")
