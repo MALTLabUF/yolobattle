@@ -1,6 +1,10 @@
 FROM pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime
 
+ARG UID=1000
+ARG GID=1000
 ARG TIANXIAOMO_REF=84754bf2dc06ea00e21bddc9ff01f341eb9eb7d6
+LABEL org.yolobattle.uid="${UID}" \
+      org.yolobattle.gid="${GID}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
