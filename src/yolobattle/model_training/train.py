@@ -338,7 +338,8 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
         p, cmd = backend.prepare(p, template=template, output_dir=Path(output_dir),
                                  gpu_indices=indices, gpus_str=gpus_str)
         print(f"[train] {cmd}")
-        returncode = subprocess.call(cmd, shell=True)
+        # ``pipefail`` ensures a trainer failure is not hidden by ``tee``.
+        returncode = subprocess.call(["bash", "-o", "pipefail", "-c", cmd])
         StopWatch.stop("benchmark")
         if returncode:
             raise RuntimeError(f"Training command failed with exit code {returncode}")
