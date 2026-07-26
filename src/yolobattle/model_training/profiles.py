@@ -5,29 +5,22 @@ from pathlib import Path
 import json
 import math
 
-@dataclass(frozen=True)
-class DatasetSpec:
-    root: str
-    sets: Tuple[str, ...]
-    classes: int
-    names: str
-    prefix: str
-    split_seed: int = 9001
-    neg_subdirs: Tuple[str, ...] = tuple()
-    exts: Tuple[str, ...] = (".jpg",)
-    flat_dir: str | None = None
-    legos: bool = False  # special lego split
-    url: str | None = None
-    sha256: str | None = None 
-    # Do not create/download/normalize this dataset; fail fast if missing.
-    require_existing: bool = False
-    # Optional supplied split.  These are paths relative to ``root`` and are
-    # used verbatim rather than making a random frame-level split.
-    predefined_train_dir: str | None = None
-    predefined_valid_dir: str | None = None
-    # Lets a read-only standard-YOLO dataset provide names without requiring
-    # an extra .names file next to the images.
-    class_names: Tuple[str, ...] = tuple()
+from yolobattle.model_training.benchmark_policy import (
+    BenchmarkPolicy,
+)
+from yolobattle.model_training.benchmark_definitions import (
+    BenchmarkDefinition,
+    CARDS_V1,
+    CUBES_V1,
+    DatasetSpec,
+    FISHEYE8K_OFFICIAL_V1,
+    FISHEYE_TRAFFIC_LOCAL_V1,
+    LEATHER_V1,
+    LEGO_GEARS_V1,
+)
+
+# Immutable policies and canonical dataset identities are defined in
+# benchmark_policy.py and benchmark_definitions.py.
 
 @dataclass(frozen=True)
 class TrainProfile:
@@ -71,6 +64,10 @@ class TrainProfile:
     # Tianxiaomo/PyTorch-YOLOv4 only
     pytorch_cfg: str = "cfg/yolov4-tiny.cfg"
 
+    # Shared, framework-neutral rules for comparable benchmarks.
+    policy: BenchmarkPolicy | None = None
+    benchmark: BenchmarkDefinition | None = None
+
     # ultralytics-only training RNG; ignored by Darknet
     training_seed: Optional[int] = None
 
@@ -80,6 +77,58 @@ class TrainProfile:
 
     sweep_keys: Tuple[str, ...] = tuple()
     sweep_values: Dict[str, Tuple[Any, ...]] = field(default_factory=dict)
+
+
+def benchmark_profile(
+    *, definition: BenchmarkDefinition, root: str,
+    val_fracs: Tuple[float, ...] | None = None, **kwargs: Any,
+) -> TrainProfile:
+    """Build a profile from one canonical dataset/policy definition."""
+    policy = definition.policy
+    return TrainProfile(
+        width=policy.width,
+        height=policy.height,
+        iterations=policy.iterations,
+        val_fracs=val_fracs or (policy.validation_fraction,),
+        dataset=definition.dataset_at(root),
+        policy=policy,
+        benchmark=definition,
+        **kwargs,
+    )
+
+
+def lego_gears_profile(
+    *, root: str, val_fracs: Tuple[float, ...] | None = None,
+    definition: BenchmarkDefinition = LEGO_GEARS_V1, **kwargs: Any,
+) -> TrainProfile:
+    """Compose a LegoGears profile from its canonical definition."""
+    return benchmark_profile(
+        definition=definition,
+        root=root,
+        val_fracs=val_fracs,
+        **kwargs,
+    )
+
+
+def effective_policy(profile: TrainProfile) -> BenchmarkPolicy | None:
+    """Resolve a run's effective split and update budget for provenance."""
+    if profile.policy is None or not profile.val_fracs:
+        return profile.policy
+    return replace(
+        profile.policy,
+        validation_fraction=float(profile.val_fracs[0]),
+        iterations=profile.iterations,
+    )
+
+
+def legacy_variant(base: TrainProfile, name: str, **changes: Any) -> TrainProfile:
+    """Keep an old profile name while inheriting its canonical base recipe.
+
+    Legacy variants intentionally have no policy: their historical sweeps retain
+    their original runner behavior, while only the varying fields live here.
+    """
+    return replace(base, name=name, policy=None, benchmark=None, **changes)
+
 
 # ---------------- equalization helpers (profiles-level policy) ----------------
 
@@ -165,466 +214,171 @@ def equalize_for_split(
     # Unknown mode; only inject the data_path
     return replace(profile, data_path=data_path)
 
-# ---------------- registered profiles ----------------
+# ---------------- canonical benchmark profiles ----------------
 
-PROFILES = {
-    "LegoGearsDarknet": TrainProfile(
-        name="LegoGearsDarknet",
-        backend="darknet",
-        data_path="/workspace/LegoGears_v2/LegoGears.data",
-        cfg_out="/workspace/LegoGears_v2/LegoGears.cfg",
-        width=224, height=160,
-        batch_size=64, subdivisions=1,
-        iterations=7000, learning_rate=0.00261,
-        templates=("yolov4-tiny", "yolov7-tiny",),
-        # templates=("yolov7-tiny",),
-        # templates=("yolov4-tiny",),
-        val_fracs=(0.10, 0.15, 0.20, 0.80,),
-        # val_fracs=(0.20,),
-        sweep_keys=("templates", "val_fracs", "num_gpus"),
-        
-        sweep_values={"num_gpus": (1,)},
-        dataset=DatasetSpec(
-            root="/workspace/LegoGears_v2",
-            sets=("set_01", "set_02_empty", "set_03"),
-            classes=5,
-            names="LegoGears.names",
-            prefix="LegoGears",
-            split_seed=9001,
-            neg_subdirs=("set_02_empty",),
-            exts=(".jpg",),
-            legos=False,
-            url="https://www.ccoderun.ca/programming/2024-05-01_LegoGears/legogears_2_dataset.zip",
-            sha256="126980d3e43986bbd3d785ac16f6430e9bf3b726e65a30574bb3c9ba06a4462e",
-        ),
-    ),
-    "LeatherDarknet": TrainProfile(
-        name="LeatherDarknet",
-        backend="darknet",
-        data_path="/workspace/leather/leather.data",
-        cfg_out="/workspace/leather/leather.cfg",
-        width=256, height=256,
-        # width=480, height=480,
-        batch_size=64, subdivisions=1,
-        iterations=7000, learning_rate=0.00261,
+BENCHMARK_PROFILES = {
+    "LegoGearsDarknetBenchmark": lego_gears_profile(
+        root="/workspace/LegoGears_v2", name="LegoGearsDarknetBenchmark", backend="darknet",
+        data_path="/workspace/LegoGears_v2/LegoGears.data", cfg_out="/workspace/LegoGears_v2/LegoGears.cfg",
+        batch_size=64, subdivisions=1, learning_rate=0.00261,
         templates=("yolov4-tiny", "yolov7-tiny"),
-        # templates=("yolov7-tiny"),
-        val_fracs=(0.20,),
-        color_presets=(None, "preserve"),
-        tag_color_preset=True,   # <— ONLY Leather opts in
+        sweep_keys=("templates", "num_gpus"), sweep_values={"num_gpus": (1,)},
+    ),
+    "LegoGearsUltraBenchmark": lego_gears_profile(
+        root="LegoGears_v2", name="LegoGearsUltraBenchmark", backend="ultralytics",
+        data_path="", cfg_out="", batch_size=64, subdivisions=1, learning_rate=0.00261,
+        templates=(), sweep_keys=("num_gpus", "ultra_model"),
+        sweep_values={"num_gpus": (1,), "ultra_model": ("yolo11n.pt", "yolo11s.pt", "yolo26n.pt", "yolo26s.pt")},
+        ultra_data="", ultra_model="yolo11n.pt",
+    ),
+    "LegoGearsPyTorchYOLOv4": lego_gears_profile(
+        root="LegoGears_v2", name="LegoGearsPyTorchYOLOv4", backend="pytorch_yolov4",
+        data_path="", cfg_out="", batch_size=16, subdivisions=1, learning_rate=0.00261,
+        num_gpus=1, pytorch_cfg="cfg/yolov4-tiny.cfg",
+    ),
+    "LeatherDarknetBenchmark": benchmark_profile(
+        definition=LEATHER_V1, root="/workspace/leather", name="LeatherDarknetBenchmark", backend="darknet",
+        data_path="/workspace/leather/leather.data", cfg_out="/workspace/leather/leather.cfg",
+        batch_size=64, subdivisions=1, learning_rate=0.00261, templates=("yolov4-tiny", "yolov7-tiny"),
+        color_presets=(None,), sweep_keys=("templates", "num_gpus"), sweep_values={"num_gpus": (1,)},
+    ),
+    "LeatherUltraBenchmark": benchmark_profile(
+        definition=LEATHER_V1, root="/workspace/leather", name="LeatherUltraBenchmark", backend="ultralytics",
+        data_path="", cfg_out="", batch_size=64, subdivisions=1, learning_rate=0.00261, templates=(),
+        color_presets=(None,), sweep_keys=("num_gpus", "ultra_model"),
+        sweep_values={"num_gpus": (1,), "ultra_model": ("yolo11n.pt", "yolo11s.pt")}, ultra_data="", ultra_model="yolo11n.pt",
+    ),
+    "FisheyeTrafficDarknetBenchmark": benchmark_profile(
+        definition=FISHEYE_TRAFFIC_LOCAL_V1, root="/blue/ranka/j.fleischer/annotation_data", name="FisheyeTrafficDarknetBenchmark", backend="darknet",
+        data_path="/host_workspace/combined.data", cfg_out="/host_workspace/combined.cfg", batch_size=64, subdivisions=16,
+        learning_rate=0.00261, templates=("yolov4", "yolov7"), sweep_keys=("templates", "num_gpus"), sweep_values={"num_gpus": (1,)},
+    ),
+    "FisheyeTrafficUltraBenchmark": benchmark_profile(
+        definition=FISHEYE_TRAFFIC_LOCAL_V1, root="/blue/ranka/j.fleischer/annotation_data", name="FisheyeTrafficUltraBenchmark", backend="ultralytics",
+        data_path="", cfg_out="", batch_size=64, subdivisions=16, learning_rate=0.00261, templates=(),
+        sweep_keys=("num_gpus", "ultra_model"), sweep_values={"num_gpus": (1,)}, ultra_data="", ultra_model="yolo11n.pt",
+    ),
+    "FishEye8KDarknetBenchmark": benchmark_profile(
+        definition=FISHEYE8K_OFFICIAL_V1, root="/blue/ranka/j.fleischer/Fisheye8K_all_including_trainandtest", name="FishEye8KDarknetBenchmark", backend="darknet",
+        data_path="/workspace/.cache/splits/FishEye8K_official.data", cfg_out="/workspace/FishEye8K.cfg", batch_size=64, subdivisions=16,
+        learning_rate=0.00261, templates=("yolov4", "yolov7"), sweep_keys=("templates", "num_gpus"), sweep_values={"num_gpus": (1,)},
+    ),
+    "FishEye8KUltraBenchmark": benchmark_profile(
+        definition=FISHEYE8K_OFFICIAL_V1, root="/blue/ranka/j.fleischer/Fisheye8K_all_including_trainandtest", name="FishEye8KUltraBenchmark", backend="ultralytics",
+        data_path="", cfg_out="", batch_size=64, subdivisions=16, learning_rate=0.00261, templates=(),
+        sweep_keys=("num_gpus", "ultra_model"), sweep_values={"num_gpus": (1,)}, ultra_data="", ultra_model="yolo11n.pt",
+    ),
+    "CubesDarknetBenchmark": benchmark_profile(
+        definition=CUBES_V1, root="/workspace/cubes", name="CubesDarknetBenchmark", backend="darknet",
+        data_path="/workspace/cubes/cubes.data", cfg_out="/workspace/cubes/cubes.cfg", batch_size=64, subdivisions=1,
+        learning_rate=0.00261, templates=("yolov4-tiny", "yolov7-tiny"), color_preset="preserve", color_presets=("preserve",),
+        tag_color_preset=True, sweep_keys=("templates", "num_gpus"), sweep_values={"num_gpus": (1,)},
+    ),
+    "CubesUltraBenchmark": benchmark_profile(
+        definition=CUBES_V1, root="/workspace/cubes", name="CubesUltraBenchmark", backend="ultralytics",
+        data_path="", cfg_out="", batch_size=64, subdivisions=1, learning_rate=0.00261, templates=(),
+        color_preset="preserve", color_presets=("preserve",), tag_color_preset=True,
+        sweep_keys=("num_gpus", "ultra_model"), sweep_values={"num_gpus": (1,), "ultra_model": ("yolo11n.pt", "yolo11s.pt")},
+        ultra_data="", ultra_model="yolo11n.pt",
+    ),
+    "CardsDarknet": benchmark_profile(
+        definition=CARDS_V1, root="/workspace/ccr_playing_cards", name="CardsDarknet", backend="darknet",
+        data_path="/workspace/ccr_playing_cards/ccr_playing_cards.data", cfg_out="/workspace/ccr_playing_cards/ccr_playing_cards.cfg",
+        batch_size=64, subdivisions=1, learning_rate=0.00261,
+        templates=("yolov4-tiny", "yolov7-tiny", "yolov4-tiny-3l"),
+        sweep_keys=("templates", "num_gpus"), sweep_values={"num_gpus": (1,)},
+    ),
+    "CardsUltra": benchmark_profile(
+        definition=CARDS_V1, root="/workspace/ccr_playing_cards", name="CardsUltra", backend="ultralytics",
+        data_path="", cfg_out="", batch_size=64, subdivisions=1, learning_rate=0.00261, templates=(),
+        sweep_keys=("templates", "num_gpus", "ultra_model"),
+        sweep_values={"num_gpus": (1,), "ultra_model": ("yolo11n.pt", "yolo11s.pt")},
+        ultra_data="", ultra_model="yolo11n.pt",
+    ),
+}
+
+# ---------------- legacy and sweep variants ----------------
+
+LEGACY_SWEEP_PROFILES = {
+    "LegoGearsDarknet": legacy_variant(
+        BENCHMARK_PROFILES["LegoGearsDarknetBenchmark"], "LegoGearsDarknet",
+        val_fracs=LEGO_GEARS_V1.policy.validation_fractions,
+        sweep_keys=("templates", "val_fracs", "num_gpus"),
+    ),
+    "LeatherDarknet": legacy_variant(
+        BENCHMARK_PROFILES["LeatherDarknetBenchmark"], "LeatherDarknet",
+        color_presets=(None, "preserve"), tag_color_preset=True,
         sweep_keys=("templates", "color_presets", "num_gpus"),
-        sweep_values={"num_gpus": (1,)},
-        dataset=DatasetSpec(
-            root="/workspace/leather",
-            sets=("color", "cut", "fold", "glue", "poke", "good_1", "good_2"),
-            classes=5,
-            names="leather.names",
-            prefix="leather",
-            split_seed=9001,
-            neg_subdirs=("good_1", "good_2"),
-            exts=(".jpg", ".png"),
-            url="https://g-665dcc.55ba.08cc.data.globus.org/leather_oct_25.zip",
-            sha256="87fba3c49bce7342af51e1fe6df5a470862f201c0e8e25bf3ea80a0c6f238d8c",
-            flat_dir="darkmark_image_cache/resize",
-        ),
-        # map_thresh=0.50,
-        # iou_thresh=0.60,
-        # map_points=None,
     ),
 
-    "LegoGearsUltra": TrainProfile(
-        name="LegoGearsUltra",
-        backend="ultralytics",
-        data_path="", cfg_out="",
-        width=224, height=160,
-        batch_size=64, subdivisions=1,
-        iterations=7000, learning_rate=0.00261,
-        templates=(),
-        val_fracs=(0.10, 0.15, 0.20, 0.80,),
-        # val_fracs=(0.80,),
+    "LegoGearsUltra": legacy_variant(
+        BENCHMARK_PROFILES["LegoGearsUltraBenchmark"], "LegoGearsUltra",
+        val_fracs=LEGO_GEARS_V1.policy.validation_fractions,
         sweep_keys=("val_fracs", "num_gpus", "ultra_model"),
-        sweep_values={
-            "num_gpus": (1,),
-            "ultra_model": ("yolo11n.pt", "yolo11s.pt", "yolo26n.pt", "yolo26s.pt"),
-        },
-        dataset=DatasetSpec(
-            root="LegoGears_v2",
-            sets=("set_01", "set_02_empty", "set_03"),
-            classes=5,
-            names="LegoGears.names",
-            prefix="LegoGears",
-            split_seed=9001,
-            neg_subdirs=("set_02_empty",),
-            exts=(".jpg",),
-            legos=False,
-            url="https://www.ccoderun.ca/programming/2024-05-01_LegoGears/legogears_2_dataset.zip",
-            sha256="126980d3e43986bbd3d785ac16f6430e9bf3b726e65a30574bb3c9ba06a4462e",
-        ),
-        epochs=None,
-        ultra_data="",
-        ultra_model="yolo11n.pt",
     ),
-    "LegoGearsPyTorchYOLOv4": TrainProfile(
-        name="LegoGearsPyTorchYOLOv4",
-        backend="pytorch_yolov4",
-        data_path="", cfg_out="",
-        # The repaired Tianxiaomo fork supports the native rectangular profile.
-        width=224, height=160,
-        batch_size=16, subdivisions=1,
-        iterations=7000, learning_rate=0.00261,
-        epochs=100,
-        val_fracs=(0.20,),
-        num_gpus=1,
-        pytorch_cfg="cfg/yolov4-tiny.cfg",
-        dataset=DatasetSpec(
-            root="LegoGears_v2",
-            sets=("set_01", "set_02_empty", "set_03"),
-            classes=5,
-            names="LegoGears.names",
-            prefix="LegoGears",
-            split_seed=9001,
-            neg_subdirs=("set_02_empty",),
-            exts=(".jpg",),
-            url="https://www.ccoderun.ca/programming/2024-05-01_LegoGears/legogears_2_dataset.zip",
-            sha256="126980d3e43986bbd3d785ac16f6430e9bf3b726e65a30574bb3c9ba06a4462e",
-        ),
-    ),
-
-    "LeatherUltra": TrainProfile(
-        name="LeatherUltra",
-        backend="ultralytics",
-        data_path="", cfg_out="",
-        width=256, height=256,
-        batch_size=64, subdivisions=1,
-        iterations=7000, learning_rate=0.00261,
-        templates=(),
-        tag_color_preset=True,
-        val_fracs=(0.20,),
-        sweep_keys=("num_gpus", "ultra_model"),
-        sweep_values={
-            "num_gpus": (1,),
-            "ultra_model": ("yolo11n.pt", "yolo11s.pt"),
-        },
-        dataset=DatasetSpec(
-            root="/workspace/leather",
-            sets=("color", "cut", "fold", "glue", "poke", "good_1", "good_2"),
-            classes=5,
-            names="leather.names",
-            prefix="leather",
-            split_seed=9001,
-            neg_subdirs=("good_1", "good_2"),
-            exts=(".jpg", ".png"),
-            url="https://g-665dcc.55ba.08cc.data.globus.org/leather_oct_25.zip",
-            sha256="87fba3c49bce7342af51e1fe6df5a470862f201c0e8e25bf3ea80a0c6f238d8c",
-            flat_dir="darkmark_image_cache/resize",
-        ),
-        epochs=None,
-        ultra_data="",
-        ultra_model="yolo11n.pt",
+    "LeatherUltra": legacy_variant(
+        BENCHMARK_PROFILES["LeatherUltraBenchmark"], "LeatherUltra", tag_color_preset=True,
     ),
 
 
-    "FisheyeTrafficDarknetLocal": TrainProfile(
-        name="FisheyeTrafficDarknetLocal",
-        backend="darknet",
-        data_path="/host_workspace/combined.data",      # <- write here
-        cfg_out="/host_workspace/combined.cfg",         # <- write here
-        width=960, height=736,
-        batch_size=64, subdivisions=16,
-        iterations=8000, learning_rate=0.00261,
-        templates=("yolov4", "yolov7"),
-        val_fracs=(0.10,),
-        sweep_keys=("templates",),
-        sweep_values={},
-        dataset=DatasetSpec(
-            root="/blue/ranka/j.fleischer/annotation_data",  # <- read-only
-            sets=tuple(),
-            classes=5,
-            names="obj.names",
-            prefix="combined",
-            split_seed=9001,
-            exts=(".jpg", ".png"),
-            require_existing=True,       # keep this
-            flat_dir="darkmark_image_cache/resize",
-        ),
+    "FisheyeTrafficDarknetLocal": legacy_variant(
+        BENCHMARK_PROFILES["FisheyeTrafficDarknetBenchmark"], "FisheyeTrafficDarknetLocal",
+        sweep_keys=("templates",), sweep_values={},
     ),
-
-    "FisheyeTrafficDarknetLocalLRSweep": TrainProfile(
-        name="FisheyeTrafficDarknetLocalLRSweep",
-        backend="darknet",
-        data_path="/host_workspace/combined.data",      # <- write here
-        cfg_out="/host_workspace/combined.cfg",         # <- write here
-        width=960, height=736,
-        batch_size=64, subdivisions=16,
-        iterations=8000, learning_rate=0.0013,
-        templates=("yolov4", "yolov7"),
-        val_fracs=(0.10,),
-        sweep_keys=("templates", "learning_rate"),
-        sweep_values={
-            "learning_rate": (0.0010, 0.0013, 0.0020, 0.00261, 0.0040),
-        },
-        dataset=DatasetSpec(
-            root="/blue/ranka/j.fleischer/annotation_data",  # <- read-only
-            sets=tuple(),
-            classes=5,
-            names="obj.names",
-            prefix="combined",
-            split_seed=9001,
-            exts=(".jpg", ".png"),
-            require_existing=True,
-            flat_dir="darkmark_image_cache/resize",
-        ),
+    "FisheyeTrafficDarknetLocalLRSweep": legacy_variant(
+        BENCHMARK_PROFILES["FisheyeTrafficDarknetBenchmark"], "FisheyeTrafficDarknetLocalLRSweep",
+        learning_rate=0.0013, sweep_keys=("templates", "learning_rate"),
+        sweep_values={"learning_rate": (0.0010, 0.0013, 0.0020, 0.00261, 0.0040)},
     ),
-
-    "FisheyeTrafficDarknetLocalJPG": TrainProfile(
-        name="FisheyeTrafficDarknetLocalJPG",
-        backend="darknet",
-        data_path="/host_workspace/combined.data",      # <- write here
-        cfg_out="/host_workspace/combined.cfg",         # <- write here
-        width=960, height=736,
-        batch_size=64, subdivisions=16,
-        iterations=8000, learning_rate=0.00261,
-        templates=("yolov4", "yolov7"),
-        val_fracs=(0.10,),
-        sweep_keys=("templates",),
-        sweep_values={},
-        dataset=DatasetSpec(
+    "FisheyeTrafficDarknetLocalJPG": legacy_variant(
+        BENCHMARK_PROFILES["FisheyeTrafficDarknetBenchmark"], "FisheyeTrafficDarknetLocalJPG",
+        sweep_keys=("templates",), sweep_values={},
+        dataset=replace(
+            FISHEYE_TRAFFIC_LOCAL_V1.dataset_at("/blue/ranka/ibraheem.qureshi/images"),
             root="/blue/ranka/ibraheem.qureshi/images",
-            sets=tuple(),                 # flat mode → no sets
-            classes=5,
             names="/blue/ranka/j.fleischer/annotation_data/obj.names",
-            prefix="combined_ibraheem",  # controls output prefix for splits
-            split_seed=9001,
-            exts=(".jpg", ".png"),
-            require_existing=True,       # keep this
-            flat_dir=".",                # use the root dir itself as the flat dir
+            prefix="combined_ibraheem", flat_dir=".",
         ),
     ),
-
-
-    "FisheyeTrafficUltralyticsLocal": TrainProfile(
-        name="FisheyeTrafficUltralyticsLocal",
-        backend="ultralytics",
-        data_path="",      
-        cfg_out="",         
-        width=960, height=736,
-        batch_size=64, subdivisions=16,
-        iterations=8000, learning_rate=0.00261,
-        templates=(),
-        val_fracs=(0.10,),
-        sweep_keys=("num_gpus",),
-        sweep_values={"num_gpus": (1,)},
-        dataset=DatasetSpec(
-            root="/blue/ranka/j.fleischer/annotation_data",  
-            sets=tuple(),
-            classes=5,
-            names="obj.names",
-            prefix="combined",
-            split_seed=9001,
-            exts=(".jpg", ".png"),
-            require_existing=True,       # keep this
-            flat_dir="darkmark_image_cache/resize",
-        ),
-        epochs=None,
-        ultra_data="",
-        ultra_model="yolo11n.pt"
+    "FisheyeTrafficUltralyticsLocal": legacy_variant(
+        BENCHMARK_PROFILES["FisheyeTrafficUltraBenchmark"], "FisheyeTrafficUltralyticsLocal",
+        sweep_keys=("num_gpus",), sweep_values={"num_gpus": (1,)},
     ),
 
     # FishEye8K ships an official camera-disjoint train/test split.  Do not
     # replace it with a random frame split: adjacent frames from one camera
     # are highly correlated and would leak into validation.
-    "FishEye8KDarknet": TrainProfile(
-        name="FishEye8KDarknet",
-        backend="darknet",
-        data_path="/workspace/.cache/splits/FishEye8K_official.data",
-        cfg_out="/workspace/FishEye8K.cfg",
-        width=1280, height=1280,
-        batch_size=64, subdivisions=16,
-        iterations=8000, learning_rate=0.00261,
-        templates=("yolov4", "yolov7"),
-        # This is only an experiment label; the actual validation set is the
-        # supplied test split, not a 30% random sample.
-        val_fracs=(0.30,),
-        sweep_keys=("templates", "num_gpus"),
-        sweep_values={"num_gpus": (1,)},
-        dataset=DatasetSpec(
-            # Official 2024-Jan archive, mounted from the shared Blue filesystem.
-            root="/blue/ranka/j.fleischer/Fisheye8K_all_including_trainandtest",
-            sets=tuple(),
-            classes=5,
-            names="FishEye8K.names",
-            prefix="FishEye8K_official",
-            exts=(".jpg", ".jpeg", ".png"),
-            require_existing=True,
-            predefined_train_dir="train/images",
-            predefined_valid_dir="test/images",
-            class_names=("Bus", "Bike", "Car", "Pedestrian", "Truck"),
-        ),
+    "FishEye8KDarknet": legacy_variant(
+        BENCHMARK_PROFILES["FishEye8KDarknetBenchmark"], "FishEye8KDarknet",
     ),
 
-    "FishEye8KUltralytics": TrainProfile(
-        name="FishEye8KUltralytics",
-        backend="ultralytics",
-        data_path="",
-        cfg_out="",
-        width=1280, height=1280,
-        batch_size=64, subdivisions=16,
-        iterations=8000, learning_rate=0.00261,
-        val_fracs=(0.30,),
-        sweep_keys=("num_gpus",),
-        sweep_values={"num_gpus": (1,)},
-        dataset=DatasetSpec(
-            # Official 2024-Jan archive, mounted from the shared Blue filesystem.
-            root="/blue/ranka/j.fleischer/Fisheye8K_all_including_trainandtest",
-            sets=tuple(),
-            classes=5,
-            names="FishEye8K.names",
-            prefix="FishEye8K_official",
-            exts=(".jpg", ".jpeg", ".png"),
-            require_existing=True,
-            predefined_train_dir="train/images",
-            predefined_valid_dir="test/images",
-            class_names=("Bus", "Bike", "Car", "Pedestrian", "Truck"),
-        ),
-        epochs=None,
-        ultra_data="",
-        ultra_model="yolo11n.pt",
+    "FishEye8KUltralytics": legacy_variant(
+        BENCHMARK_PROFILES["FishEye8KUltraBenchmark"], "FishEye8KUltralytics",
     ),
 
-    "CubesDarknet": TrainProfile(
-        name="CubesDarknet",
-        backend="darknet",
-        data_path="/workspace/cubes/cubes.data",
-        cfg_out="/workspace/cubes/cubes.cfg",
-        width=224, height=160,
-        batch_size=64, subdivisions=1,
-        iterations=7000, learning_rate=0.00261,
-        templates=("yolov4-tiny", "yolov7-tiny"),
-        color_preset="preserve",
-        color_presets=("preserve",),
-        tag_color_preset=True,
-        # templates=("yolov7-tiny"),
-        val_fracs=(0.10, 0.15, 0.20,),
+    "CubesDarknet": legacy_variant(
+        BENCHMARK_PROFILES["CubesDarknetBenchmark"], "CubesDarknet",
+        val_fracs=CUBES_V1.policy.validation_fractions,
         sweep_keys=("val_fracs", "templates", "num_gpus"),
-        sweep_values={"num_gpus": (1,)},
-        dataset=DatasetSpec(
-            root="/workspace/cubes",
-            sets=tuple(),
-            classes=4,
-            names="cubes.names",
-            prefix="cubes",
-            split_seed=9001,
-            exts=(".jpg", ".png"),
-            # url="https://g-665dcc.55ba.08cc.data.globus.org/cubes_11_26_25.zip",
-            url="https://g-665dcc.55ba.08cc.data.globus.org/refinedcubes.zip",
-            # sha256="ad2f33dcf702c9c98daee0bc45ad0ca60a865ebaae36dd1ce5bfe5ac5968a70b",
-            sha256="8764c5086e1cada0b66de5198df11655009315873bc9245fd44741ff6e31f4e0",
-            flat_dir="darkmark_image_cache/resize",
-        ),
     ),
-
-    "CubesUltra": TrainProfile(
-        name="CubesUltra",
-        backend="ultralytics",
-        data_path="",
-        cfg_out="",
-        width=224, height=160,
-        batch_size=64, subdivisions=1,
-        iterations=7000, learning_rate=0.00261,
-        templates=(),
-        color_preset="preserve",
-        color_presets=("preserve",),
-        tag_color_preset=True,
-        # templates=("yolov7-tiny"),
-        val_fracs=(0.10, 0.15, 0.20,),
-        # val_fracs=(0.20,),
+    "CubesUltra": legacy_variant(
+        BENCHMARK_PROFILES["CubesUltraBenchmark"], "CubesUltra",
+        val_fracs=CUBES_V1.policy.validation_fractions,
         sweep_keys=("val_fracs", "templates", "num_gpus", "ultra_model"),
-        sweep_values={
-            "num_gpus": (1,),
-            "ultra_model": ("yolo11n.pt", 
-                            "yolo11s.pt"
-                            ),
-        },
-        dataset=DatasetSpec(
-            root="/workspace/cubes",
-            sets=tuple(),
-            classes=4,
-            names="cubes.names",
-            prefix="cubes",
-            split_seed=9001,
-            exts=(".jpg", ".png"),
-            # url="https://g-665dcc.55ba.08cc.data.globus.org/cubes_11_26_25.zip",
-            url="https://g-665dcc.55ba.08cc.data.globus.org/refinedcubes.zip",
-            # sha256="ad2f33dcf702c9c98daee0bc45ad0ca60a865ebaae36dd1ce5bfe5ac5968a70b",
-            sha256="8764c5086e1cada0b66de5198df11655009315873bc9245fd44741ff6e31f4e0",
-            flat_dir="darkmark_image_cache/resize",
-        ),
-        epochs=None,
-        ultra_data="",
-        ultra_model="yolo11n.pt"
     ),
+}
 
-    "CardsDarknet": TrainProfile(
-        name="CardsDarknet",
-        backend="darknet",
-        data_path="/workspace/ccr_playing_cards/ccr_playing_cards.data",
-        cfg_out="/workspace/ccr_playing_cards/ccr_playing_cards.cfg",
-        width=768, height=576,
-        batch_size=64, subdivisions=1,
-        iterations=6000, learning_rate=0.00261,
-        templates=("yolov4-tiny", "yolov7-tiny", "yolov4-tiny-3l",),
-        # templates=(),
-        # templates=("yolov7-tiny"),
-        val_fracs=(0.20,),
-        sweep_keys=("templates", "num_gpus"),
-        sweep_values={"num_gpus": (1,)},
-        dataset=DatasetSpec(
-            root="/workspace/ccr_playing_cards",
-            sets=tuple(),
-            classes=19,
-            names="ccr_playing_cards.names",
-            prefix="ccr_playing_cards",
-            split_seed=9001,
-            exts=(".jpg", ".png"),
-            url="https://g-665dcc.55ba.08cc.data.globus.org/playing_cards.zip",
-            sha256="432d6da3a2fbec5d1dadd3278b5c4c21ccbaa2dbcd72e087daf193e9bdaf3cc4",
-            flat_dir="darkmark_image_cache/resize",
-        ),
-    ),
 
-    "CardsUltra": TrainProfile(
-        name="CardsUltra",
-        backend="ultralytics",
-        data_path="",
-        cfg_out="",
-        width=768, height=576,
-        batch_size=64, subdivisions=1,
-        iterations=6000, learning_rate=0.00261,
-        templates=(),
-        # templates=("yolov7-tiny"),
-        val_fracs=(0.20,),
-        sweep_keys=("templates", "num_gpus", "ultra_model"),
-        sweep_values={
-            "num_gpus": (1,),
-            "ultra_model": ("yolo11n.pt", "yolo11s.pt"),
-        },
-        dataset=DatasetSpec(
-            root="/workspace/ccr_playing_cards",
-            sets=tuple(),
-            classes=19,
-            names="ccr_playing_cards.names",
-            prefix="ccr_playing_cards",
-            split_seed=9001,
-            exts=(".jpg", ".png"),
-            url="https://g-665dcc.55ba.08cc.data.globus.org/playing_cards.zip",
-            sha256="432d6da3a2fbec5d1dadd3278b5c4c21ccbaa2dbcd72e087daf193e9bdaf3cc4",
-            flat_dir="darkmark_image_cache/resize",
-        ),
-        epochs=None,
-        ultra_data="",
-        ultra_model="yolo11n.pt"
-    ),
+# No remaining profiles fall outside a canonical benchmark definition.
+UNCANONICALIZED_PROFILES: Dict[str, TrainProfile] = {}
 
+
+# Public lookup registry.  Keep category dictionaries above so their intent is
+# visible without changing any established profile names.
+PROFILES = {
+    **BENCHMARK_PROFILES,
+    **LEGACY_SWEEP_PROFILES,
+    **UNCANONICALIZED_PROFILES,
 }
 
 def get_profile(key: str) -> TrainProfile:

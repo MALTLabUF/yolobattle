@@ -69,6 +69,31 @@ confusion matrices, benchmark CSV/YAML, and bundles. Add a backend by
 implementing that adapter contract and registering it; do not add framework
 branches to the shared benchmark stages.
 
+Canonical profiles share immutable benchmark policies: geometry, split rule,
+iteration budget, export confidence, NMS IoU, checkpoint selection, COCO IoUs,
+and confusion-matrix thresholds. The policy fingerprint is written to each
+benchmark CSV/YAML. Current framework-comparison pairs are:
+
+| Dataset | Policy | Profiles | Geometry / budget |
+| --- | --- | --- | --- |
+| LegoGears | `legogears_224x160_v1` | Darknet, Ultralytics, PyTorch YOLOv4 | 224×160 / 7000 iterations |
+| Leather | `leather_256x256_v1` | Darknet, Ultralytics | 256×256 / 7000 iterations |
+| Fisheye Traffic (local) | `fisheye_traffic_960x736_v1` | Darknet, Ultralytics | 960×736 / 8000 iterations |
+| FishEye8K | `fisheye8k_official_1280x1280_v1` | Darknet, Ultralytics | 1280×1280 / 8000 iterations; official train/test split |
+| Cubes | `cubes_224x160_v1` | Darknet, Ultralytics | 224×160 / 7000 iterations |
+| Cards | `cards_768x576_v1` | Darknet, Ultralytics | 768×576 / 6000 iterations |
+
+Canonical profiles use `iterations` as the common training budget; backends
+that require epochs derive them from the generated split and batch
+configuration. Existing non-`Benchmark` profiles remain available for legacy
+runs and parameter sweeps. LegoGears' legacy sweep fractions (10%, 15%, 20%,
+and 80%) are declared by `legogears_224x160_v1`; its canonical comparison
+fraction remains 20%.
+
+Each canonical policy is paired with its framework-independent dataset recipe
+in `model_training/benchmark_definitions.py`. Framework profiles provide only
+the runtime mount path plus framework-specific training settings.
+
 ## Apptainer
 
 - `yolobattle apptainer build --backend darknet`
@@ -90,13 +115,26 @@ branches to the shared benchmark stages.
   - `yolobattle apptainer slurm --backend ultralytics --batch --batch-config path/to/config.yaml --batch-source path/to/script.in.slurm --batch-output-dir project --batch-name chocolatechip_runs`
  
 ## Profiles 
-- LegoGearsDarknet
-- LegoGearsUltra
+- LegoGearsDarknetBenchmark
+- LegoGearsUltraBenchmark
+- LegoGearsPyTorchYOLOv4
+- LegoGearsDarknet (legacy validation-fraction sweep)
+- LegoGearsUltra (legacy validation-fraction sweep)
+- LeatherDarknetBenchmark
+- LeatherUltraBenchmark
 - LeatherDarknet
 - LeatherUltra
+- FisheyeTrafficDarknetBenchmark
+- FisheyeTrafficUltraBenchmark
 - FisheyeTrafficDarknetLocal
 - FisheyeTrafficDarknetLocalJPG
 - FisheyeTrafficUltralyticsLocal
+- FishEye8KDarknetBenchmark
+- FishEye8KUltraBenchmark
+- FishEye8KDarknet
+- FishEye8KUltralytics
+- CubesDarknetBenchmark
+- CubesUltraBenchmark
 - CubesDarknet
 - CubesUltra
 - CardsDarknet

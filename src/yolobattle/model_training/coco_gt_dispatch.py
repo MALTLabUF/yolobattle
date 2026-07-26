@@ -1,6 +1,6 @@
 from pathlib import Path
 from yolobattle.model_training.coco_build_gt import build_coco_gt
-from yolobattle.model_training.profiles import DatasetSpec
+from yolobattle.model_training.benchmark_definitions import DatasetSpec
 
 def build_coco_gt_for_dataset(
     *,

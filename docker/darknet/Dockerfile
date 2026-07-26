@@ -59,4 +59,4 @@ USER appuser
 WORKDIR /workspace
 
 # Default command (can be overridden at runtime)
-CMD ["bash", "-lc", "bash build_darknet.sh; python -u -m yolobattle.model_training.train --profile LegoGearsDarknet"]
+CMD ["bash", "-lc", "bash build_darknet.sh; python -u -m yolobattle.model_training.train --profile LegoGearsDarknetBenchmark"]

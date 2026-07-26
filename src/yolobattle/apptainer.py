@@ -456,7 +456,7 @@ def main(argv: list[str] | None = None) -> None:
 
     run = subparsers.add_parser("run", help="Run an Apptainer image.")
     run.add_argument("--backend", default=None, help="Override backend (darknet|ultralytics).")
-    run.add_argument("--profile", default="LegoGearsDarknet", help="Training profile name.")
+    run.add_argument("--profile", default="LegoGearsDarknetBenchmark", help="Training profile name.")
     run.add_argument("--image", default=None, help="Path to .sif image.")
     run.add_argument("--outputs", default=None, help="Host outputs directory.")
     run.add_argument("--build", action="store_true", help="Build image before running.")

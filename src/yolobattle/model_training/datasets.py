@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
-from .profiles import DatasetSpec
+from .benchmark_definitions import DatasetSpec
 
 MARKER_NAME = ".download_complete.json"
 

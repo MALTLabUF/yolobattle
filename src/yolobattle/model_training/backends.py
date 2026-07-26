@@ -93,6 +93,13 @@ def _darknet_binary() -> str:
     return "darknet"
 
 
+def _checkpoint_selector(profile) -> str:
+    selector = profile.policy.checkpoint_selector if profile.policy else "backend_default"
+    if selector not in {"final", "backend_default"}:
+        raise ValueError(f"Unsupported checkpoint selector: {selector}")
+    return selector
+
+
 class DarknetBackend:
     name = "darknet"
 
@@ -129,14 +136,24 @@ class DarknetBackend:
         return train, valid, ((profile.iterations * profile.batch_size / train) if train else None)
 
     def export_coco(self, profile, *, output_dir, gt_json, det_json, valid_list, threshold, gpu_indices):
+        selector = _checkpoint_selector(profile)
         cfg = Path(profile.cfg_out)
         split_dir = Path(os.environ.get("WRITABLE_BASE", "/workspace/.cache/splits"))
-        candidates = [
+        final_candidates = [
+            split_dir / f"{cfg.stem}_final.weights", split_dir / "final.weights",
+            cfg.with_name(f"{cfg.stem}_final.weights"), cfg.with_name("final.weights"),
+        ]
+        fallback_candidates = [
+            split_dir / f"{cfg.stem}_last.weights", split_dir / "last.weights",
+            cfg.with_name(f"{cfg.stem}_last.weights"), cfg.with_name("last.weights"),
+        ]
+        best_candidates = [
             cfg.with_name(f"{cfg.stem}_best.weights"), cfg.with_name("best.weights"),
             split_dir / f"{cfg.stem}_best.weights", split_dir / "best.weights",
-            split_dir / f"{cfg.stem}_last.weights", split_dir / "last.weights",
-            split_dir / f"{cfg.stem}_final.weights", split_dir / "final.weights",
         ]
+        candidates = final_candidates + fallback_candidates
+        if selector == "backend_default":
+            candidates = best_candidates + candidates
         weights = next((p for p in candidates if p.is_file()), None)
         if weights is None:
             raise RuntimeError("Darknet training produced no weights")
@@ -183,8 +200,11 @@ class UltralyticsBackend:
         return count("train.txt"), count("valid.txt"), profile.epochs
 
     def export_coco(self, profile, *, output_dir, gt_json, det_json, valid_list, threshold, gpu_indices):
-        export_ultra_detections(weights=str(output_dir / "train" / "weights" / "best.pt"),
-            ann_json=gt_json, out_json=det_json, images_txt=valid_list, conf=threshold, iou=0.45,
+        selector = _checkpoint_selector(profile)
+        nms_iou = profile.policy.export_nms_iou if profile.policy else 0.45
+        checkpoint = "last.pt" if selector == "final" else "best.pt"
+        export_ultra_detections(weights=str(output_dir / "train" / "weights" / checkpoint),
+            ann_json=gt_json, out_json=det_json, images_txt=valid_list, conf=threshold, iou=nms_iou,
             imgsz=(profile.height, profile.width), device=gpu_indices, batch=2, save_vis=True, vis_dir=str(output_dir))
 
     def model_label(self, profile, template): return profile.ultra_model
@@ -207,12 +227,13 @@ class TianxiaomoBackend:
         return train, valid, profile.epochs
 
     def export_coco(self, profile, *, output_dir, gt_json, det_json, valid_list, threshold, gpu_indices):
+        _checkpoint_selector(profile)
         checkpoints = sorted((output_dir / "checkpoints").glob("Yolov4_epoch*.pth"), key=lambda p: p.stat().st_mtime)
         if not checkpoints: raise RuntimeError("Tianxiaomo training produced no checkpoint")
         export_tianxiaomo_detections(repo_path=os.environ["PYTORCH_YOLOV4_ROOT"], checkpoint=str(checkpoints[-1]),
             cfg_path=str(output_dir / f"{Path(profile.data_path).stem}.pytorch.cfg"), ann_json=gt_json,
             out_json=det_json, images_txt=valid_list, width=profile.width, height=profile.height,
-            conf=threshold, iou=0.45, device="cuda")
+            conf=threshold, iou=profile.policy.export_nms_iou if profile.policy else 0.45, device="cuda")
 
     def model_label(self, profile, template): return profile.pytorch_cfg
     def finalize(self, profile, output_dir): pass
