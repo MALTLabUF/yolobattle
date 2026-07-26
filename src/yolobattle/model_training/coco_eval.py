@@ -2,10 +2,16 @@
 from __future__ import annotations
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
-from typing import List, Dict, Tuple
+from typing import Iterable, List, Dict, Tuple
+import numpy as np
 
 
-def coco_eval_bbox(gt_json: str, det_json: str) -> Dict[str, object]:
+def coco_eval_bbox(
+    gt_json: str,
+    det_json: str,
+    *,
+    iou_thresholds: Iterable[float] | None = None,
+) -> Dict[str, object]:
     """
     Evaluate detections (COCO bbox) using pycocotools.
     Returns a dict with AP, AP50, AP75 (as percentages) and per-IoU AP curve.
@@ -14,6 +20,8 @@ def coco_eval_bbox(gt_json: str, det_json: str) -> Dict[str, object]:
     coco_dt = coco_gt.loadRes(det_json)
 
     eval = COCOeval(coco_gt, coco_dt, iouType='bbox')
+    if iou_thresholds is not None:
+        eval.params.iouThrs = np.asarray(tuple(iou_thresholds), dtype=float)
     eval.evaluate()
     eval.accumulate()
     eval.summarize()
@@ -28,7 +36,7 @@ def coco_eval_bbox(gt_json: str, det_json: str) -> Dict[str, object]:
     # eval.eval['precision'] shape = [T, R, K, A, M]
     # T=len(thrs), R=len(recalls), K=classes, A=areas, M=maxDets configs
     P = eval.eval['precision']  # T x R x K x A x M
-    thrs = eval.params.iouThrs   # array of IoU thresholds (0.50 -> 0.95 step 0.05)
+    thrs = eval.params.iouThrs
 
     per_iou: List[Tuple[float, float]] = []
     if P is not None:
@@ -45,7 +53,6 @@ def coco_eval_bbox(gt_json: str, det_json: str) -> Dict[str, object]:
         "AP75": ap75,
         "AP_per_IoU": per_iou,  # list of (iou, AP%) for the 10 thresholds
     }
-
 
 
 

@@ -16,7 +16,7 @@ from cloudmesh.gpu.gpu import Gpu
 from yolobattle.model_training.hw_info import (
     summarize_env, resolve_gpu_selection, fio_seq_rw, get_disk_info, cpu_threads_used
 )
-from yolobattle.model_training.profiles import TrainProfile, get_profile, equalize_for_split
+from yolobattle.model_training.profiles import TrainProfile, effective_policy, get_profile, equalize_for_split
 from yolobattle.model_training.dataset_setup import make_split, IMG_EXTS
 
 from yolobattle.model_training.datasets import ensure_download_once
@@ -74,6 +74,19 @@ def _color_token(p) -> str:
     if v in (None, "", "off"):
         return "__color_off"
     return f"__color_{slugify(str(v))}"
+
+
+def parse_darknet_data_file(data_path: str) -> dict[str, str]:
+    """Read generated Darknet ``.data`` paths needed by shared COCO export."""
+    values: dict[str, str] = {}
+    path = Path(data_path)
+    if not data_path or not path.is_file():
+        return values
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        if "=" in line and not line.lstrip().startswith("#"):
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip()
+    return values
 
 
 def build_split_for(vf: float, ds, out_dir: str | Path | None = None) -> tuple[str, str]:
@@ -200,7 +213,9 @@ def _with_ultra_reference_epochs(profile: TrainProfile, reference_data_path: str
 # ---------- one run ----------
 def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
              flat_output: bool = False) -> None:
+    p = replace(p, policy=effective_policy(p))
     backend = get_backend(p.backend)
+    policy = p.policy
     user = effective_username()
     now = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -428,14 +443,18 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
                 names_path=Path(generated_names) if generated_names else None,
             )
 
-        export_thresh = 0.01  # fixed policy: 1% conf threshold for COCO export
+        export_thresh = policy.export_confidence if policy else 0.01
 
         # 3) framework adapter exports detections using the common policy.
         det_json = os.path.join(output_dir, f"dets_{p.backend}.coco.json")
         backend.export_coco(p, output_dir=Path(output_dir), gt_json=gt_json, det_json=det_json,
                             valid_list=val_list, threshold=export_thresh, gpu_indices=indices)
 
-        coco_metrics = coco_eval_bbox(gt_json, det_json)
+        coco_metrics = coco_eval_bbox(
+            gt_json,
+            det_json,
+            iou_thresholds=policy.coco_iou_thresholds if policy else None,
+        )
         coco_ap5095 = coco_metrics["AP"]
         coco_ap50   = coco_metrics["AP50"]
         coco_ap75   = coco_metrics["AP75"]
@@ -459,8 +478,8 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
             cm = compute_confusion_from_coco(
                 gt_json,
                 det_json,
-                iou_thresh=0.50,
-                conf_thresh=0.50,
+                iou_thresh=policy.confusion_iou if policy else 0.50,
+                conf_thresh=policy.confusion_confidence if policy else 0.50,
                 csv_style="generic",  # "per-class" or "none"
                 write_json_path=os.path.join(output_dir, "confusion_matrix.json"),
                 json_indent=2,
@@ -501,6 +520,10 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
         "Backend": p.backend,
         "Profile": p.name,
         "YOLO Template": backend.model_label(p, template),
+        "Benchmark Policy": policy.name if policy else "legacy",
+        "Benchmark Policy Fingerprint": policy.fingerprint() if policy else "legacy",
+        "Benchmark Definition": p.benchmark.name if p.benchmark else "legacy",
+        "Benchmark Definition Fingerprint": p.benchmark.fingerprint() if p.benchmark else "legacy",
         "Benchmark Time (s)": b["time"],
         "CPU Name": sysinfo["cpu"],
         "CPU Threads": sysinfo["cpu_threads"],
@@ -603,12 +626,13 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
 # ---------- main ----------
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Train with a named profile (profiles may contain multiple templates).")
-    ap.add_argument("--profile", default="LegoGearsDarknet", help="Profile name in profiles.PROFILES")
+    ap.add_argument("--profile", default="LegoGearsDarknetBenchmark", help="Profile name in profiles.PROFILES")
 
     #cloudmesh ee
     ap.add_argument("--template", default=None, help="Darknet template override (e.g., yolov7-tiny)")
     ap.add_argument("--val-frac", type=float, default=None, help="Validation fraction override")
     ap.add_argument("--num-gpus", type=int, default=None, help="Request N GPUs")
+    ap.add_argument("--iterations", type=int, default=None, help="Optimizer-update budget override")
     ap.add_argument("--learning-rate", type=float, default=None, help="Learning rate override")
     ap.add_argument("--color-preset", default=None, help="Color preset override")
     ap.add_argument("--ultra-model", default=None, help="Ultralytics model override")
@@ -644,6 +668,12 @@ if __name__ == "__main__":
 
     if args.num_gpus is not None:
         p = replace(p, num_gpus=int(args.num_gpus))
+        overrides_used = True
+
+    if args.iterations is not None:
+        if args.iterations <= 0:
+            ap.error("--iterations must be positive")
+        p = replace(p, iterations=int(args.iterations))
         overrides_used = True
 
     if args.learning_rate is not None:

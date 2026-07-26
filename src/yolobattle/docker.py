@@ -494,7 +494,7 @@ def main(argv: list[str] | None = None) -> None:
     run = subparsers.add_parser("run", help="Run the yolobattle Docker container.")
     run.add_argument("--image", default="yolobattle-container", help="Docker image tag.")
     run.add_argument("--name", default="yolobattle", help="Container name.")
-    run.add_argument("--profile", default="LegoGearsDarknet", help="Training profile name.")
+    run.add_argument("--profile", default="LegoGearsDarknetBenchmark", help="Training profile name.")
     run.add_argument("--gpus", default="all", help="GPU selection (all|0,1|device=0,1).")
     run.add_argument("--backend", default=None, help="Override backend (darknet|ultralytics).")
     run.add_argument("--no-clean", action="store_true", help="Do not delete /workspace/darknet before run.")

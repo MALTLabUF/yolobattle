@@ -37,4 +37,4 @@ ENV HOME=/home/appuser
 USER appuser
 
 WORKDIR /ultralytics
-CMD ["bash", "-lc", "python -u -m yolobattle.model_training.train --profile LegoGearsUltra"]
+CMD ["bash", "-lc", "python -u -m yolobattle.model_training.train --profile LegoGearsUltraBenchmark"]
