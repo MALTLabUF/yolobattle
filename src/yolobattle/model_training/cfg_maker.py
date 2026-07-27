@@ -16,6 +16,7 @@ python cfg_maker.py \
 
 from __future__ import annotations
 import argparse, re, sys, math, random
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict
 from urllib.request import urlopen, Request
@@ -262,6 +263,75 @@ def avg_iou_against_anchors(wh: List[Tuple[float,float]], anchors: List[Tuple[fl
             count += 1
     return (100.0 * total / count) if count else 0.0
 
+
+@dataclass(frozen=True)
+class AnchorLayout:
+    """Deterministic anchors and per-head masks for one Darknet template."""
+
+    anchors: Tuple[Tuple[int, int], ...]
+    masks: Tuple[Tuple[int, ...], ...]
+    average_iou: float
+
+
+def _anchor_cluster_count(template_name: str, num_heads: int, anchor_clusters: Optional[int]) -> int:
+    if anchor_clusters and anchor_clusters > 1:
+        return anchor_clusters
+    if template_name in ("yolov7", "yolov4", "yolov7-tiny", "yolov4-tiny-3l"):
+        return 9
+    if template_name == "yolov4-tiny":
+        return 6
+    return max(3 * num_heads, 9 if num_heads >= 3 else 6)
+
+
+def calibrate_anchor_layout(
+    anchors_wh: List[Tuple[float, float]], *, template_name: str, num_heads: int,
+    anchor_clusters: Optional[int] = None,
+) -> AnchorLayout:
+    """Return the one deterministic anchor layout shared by all backends."""
+    template_name = template_name.lower()
+    anchors = tuple(kmeans_iou(anchors_wh, _anchor_cluster_count(template_name, num_heads, anchor_clusters)))
+    average_iou = avg_iou_against_anchors(anchors_wh, list(anchors))
+    groups = [list(range(3 * group, min(3 * group + 3, len(anchors))))
+              for group in range((len(anchors) + 2) // 3)]
+    if groups and len(groups[-1]) < 3:
+        groups[-1].extend([groups[-1][-1]] * (3 - len(groups[-1])))
+
+    if template_name == "yolov4-tiny" and num_heads == 2:
+        group_order = [1, 0]  # large, small
+    elif template_name in ("yolov7", "yolov7-tiny", "yolov4") and num_heads == 3:
+        group_order = [0, 1, 2]  # small, mid, large
+    elif template_name == "yolov4-tiny-3l" and num_heads == 3:
+        group_order = [2, 1, 0]  # large, mid, small
+    else:
+        group_order = list(reversed(range(min(num_heads, len(groups)))))
+
+    masks = tuple(
+        tuple(groups[group_order[head]] if head < len(group_order) else groups[-1])
+        for head in range(num_heads)
+    )
+    return AnchorLayout(anchors=anchors, masks=masks, average_iou=average_iou)
+
+
+def calibrate_anchor_layout_from_data(
+    data_path: Path, *, template_name: str, num_heads: int, width: int, height: int,
+    classes: int, anchor_clusters: Optional[int] = None,
+) -> AnchorLayout:
+    """Calibrate an anchor layout from the train split named by a .data file."""
+    data_cfg = parse_data_file(data_path)
+    data_classes = int(data_cfg["classes"])
+    if data_classes != classes:
+        raise ValueError(f"{data_path} declares {data_classes} classes, expected {classes}")
+    train_list_path = Path(data_cfg["train"])
+    if not train_list_path.exists():
+        raise FileNotFoundError(f"train list not found: {train_list_path}")
+    image_paths = read_train_list(train_list_path)
+    if not image_paths:
+        raise ValueError(f"No images found in train list {train_list_path}")
+    anchors_wh, _, _ = load_wh_from_labels(image_paths, width, height, classes)
+    return calibrate_anchor_layout(
+        anchors_wh, template_name=template_name, num_heads=num_heads, anchor_clusters=anchor_clusters,
+    )
+
 def resolve_color_triplet(color_preset: Optional[str]) -> Optional[tuple[float,float,float]]:
     if not color_preset:
         return None
@@ -369,39 +439,11 @@ def transform_cfg_from_text(template_text: str, *,
         sys.exit("Template has no [yolo] sections")
     num_heads = len(yolo_idxs)
 
-    if anchor_clusters and anchor_clusters > 1:
-        k = anchor_clusters
-    elif template_name in ("yolov7", "yolov4", "yolov7-tiny", "yolov4-tiny-3l"):
-        k = 9
-    elif template_name == "yolov4-tiny":
-        k = 6
-    else:
-        k = max(3 * num_heads, 9 if num_heads >= 3 else 6)
-
-    anchors = kmeans_iou(anchors_wh, k)
-    avg_iou = avg_iou_against_anchors(anchors_wh, anchors)
-
-    anchors.sort(key=lambda x: x[0] * x[1])
-    groups = [list(range(3*g, min(3*g+3, len(anchors)))) for g in range((len(anchors)+2)//3)]
-    if groups and len(groups[-1]) < 3:
-        last = groups[-1]
-        while len(last) < 3:
-            last.append(last[-1])
-
-    # Map triplets to heads in file order
-    if template_name == "yolov4-tiny" and num_heads == 2:
-        group_order = [1, 0]        # large, small
-    elif template_name in ("yolov7", "yolov7-tiny") and num_heads == 3:
-        group_order = [0, 1, 2]     # small, mid, large
-    elif template_name in ("yolov4",) and num_heads == 3:
-        group_order = [0, 1, 2]     # small, mid, large
-    elif template_name in ("yolov4-tiny-3l",) and num_heads == 3:
-        group_order = [2, 1, 0]     # large, mid, small   <-- matches your cfg
-    else:
-        group_order = list(reversed(range(min(num_heads, len(groups)))))
-
-    anchors_csv = ", ".join(f"{int(w)}, {int(h)}" for (w, h) in anchors)
-    total_num = len(anchors)
+    anchor_layout = calibrate_anchor_layout(
+        anchors_wh, template_name=template_name, num_heads=num_heads, anchor_clusters=anchor_clusters,
+    )
+    anchors_csv = ", ".join(f"{width}, {height}" for width, height in anchor_layout.anchors)
+    total_num = len(anchor_layout.anchors)
 
     # Helper to read a key in a section block
     def get_key_in_block(sec_start: int, sec_end: int, key: str) -> Optional[str]:
@@ -416,7 +458,7 @@ def transform_cfg_from_text(template_text: str, *,
     for head_idx, yi in enumerate(yolo_idxs):
         _, ys, ye = secs[yi]
 
-        mask_ids = groups[group_order[head_idx]] if head_idx < len(group_order) else groups[-1]
+        mask_ids = anchor_layout.masks[head_idx]
 
         section_key_set(lines, ys, ye, "classes", str(classes))
         section_key_set(lines, ys, ye, "mask", ",".join(str(i) for i in mask_ids))
@@ -474,7 +516,9 @@ def transform_cfg_from_text(template_text: str, *,
 
         secs = find_section_ranges(lines)
 
-    print(f"[anchors] template={template_name}, k={k}, avg IoU ≈ {avg_iou:.2f}%")
+    print(
+        f"[anchors] template={template_name}, k={total_num}, avg IoU ≈ {anchor_layout.average_iou:.2f}%"
+    )
     print(f"[class balance] counters_per_class = {counters_per_class}")
     return lines
 

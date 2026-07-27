@@ -4,12 +4,14 @@ from __future__ import annotations
 import os
 import subprocess
 import math
+import re
 from dataclasses import replace
 from pathlib import Path
 
 from yolobattle.model_training.dataset_setup import IMG_EXTS, make_split
 from yolobattle.model_training.datasets import ensure_download_once
 from yolobattle.model_training.benchmark_definitions import DatasetSpec
+from yolobattle.model_training.cfg_maker import calibrate_anchor_layout_from_data
 from yolobattle.model_training.profiles import TrainProfile
 
 
@@ -58,6 +60,29 @@ def darknet_style_schedule(iterations: int) -> tuple[int, tuple[int, int], tuple
     return burn_in, steps, (0.1, 0.1)
 
 
+def apply_yolo_anchor_layout(cfg_path: Path, anchors: tuple[tuple[int, int], ...],
+                             masks: tuple[tuple[int, ...], ...]) -> None:
+    """Patch generated PyTorch cfg heads with the shared Darknet anchor layout."""
+    sections = re.split(r"(\n\s*\n)", cfg_path.read_text(encoding="utf-8"))
+    yolo_indices = [index for index, section in enumerate(sections) if section.lstrip().startswith("[yolo]")]
+    if len(yolo_indices) != len(masks):
+        raise ValueError(f"Expected {len(masks)} [yolo] sections in {cfg_path}, found {len(yolo_indices)}")
+    anchors_csv = ", ".join(f"{width}, {height}" for width, height in anchors)
+    for head_index, yolo_index in enumerate(yolo_indices):
+        sections[yolo_index], anchor_count = re.subn(
+            r"(?m)^anchors\s*=\s*[^\n]+$", f"anchors={anchors_csv}", sections[yolo_index],
+        )
+        sections[yolo_index], mask_count = re.subn(
+            r"(?m)^mask\s*=\s*[^\n]+$", "mask=" + ",".join(map(str, masks[head_index])), sections[yolo_index],
+        )
+        sections[yolo_index], num_count = re.subn(
+            r"(?m)^num\s*=\s*\d+\s*$", f"num={len(anchors)}", sections[yolo_index],
+        )
+        if anchor_count != 1 or mask_count != 1 or num_count != 1:
+            raise ValueError(f"YOLO head {head_index} in {cfg_path} is missing anchors, mask, or num")
+    cfg_path.write_text("".join(sections), encoding="utf-8")
+
+
 def prepare(profile: TrainProfile, output_dir: Path) -> tuple[TrainProfile, Path, Path, Path]:
     if profile.backend != "pytorch_yolov4" or profile.dataset is None:
         raise ValueError("pytorch_yolov4 requires a profile with a DatasetSpec")
@@ -91,6 +116,19 @@ def prepare(profile: TrainProfile, output_dir: Path) -> tuple[TrainProfile, Path
         "--cfg-output", str(model_cfg), "--classes", str(dataset.classes), "--width", str(profile.width),
         "--height", str(profile.height),
     ], check=True)
+    model_sections = re.split(r"(\n\s*\n)", model_cfg.read_text(encoding="utf-8"))
+    num_heads = sum(section.lstrip().startswith("[yolo]") for section in model_sections)
+    if num_heads == 0:
+        raise ValueError(f"{model_cfg} contains no [yolo] detection heads")
+    anchor_layout = calibrate_anchor_layout_from_data(
+        data_path,
+        template_name=Path(profile.pytorch_cfg).stem,
+        num_heads=num_heads,
+        width=profile.width,
+        height=profile.height,
+        classes=dataset.classes,
+    )
+    apply_yolo_anchor_layout(model_cfg, anchor_layout.anchors, anchor_layout.masks)
     subprocess.run(["python", str(converter), str(valid_list), str(valid_labels)], check=True)
     return replace(profile, dataset=dataset, data_path=str(data_path), epochs=epochs), model_cfg, train_labels, valid_labels
 
@@ -108,6 +146,10 @@ def build_command(profile: TrainProfile, model_cfg: Path, train_labels: Path, va
         "-optimizer", "sgd", "-l", str(profile.learning_rate),
         "--burn-in", str(burn_in), "--steps", *(str(step) for step in steps),
         "--scales", *(str(scale) for scale in scales),
-        "--seed", str(profile.dataset.split_seed), "--mosaic", "0",
+        "--seed", str(profile.dataset.split_seed),
+        "--mosaic", str(profile.mosaic), "--jitter", str(profile.jitter),
+        "--hue", str(profile.hue), "--saturation", str(profile.saturation),
+        "--exposure", str(profile.exposure), "--flip", str(profile.flip),
+        "--eval-interval", "100", "--checkpoint-interval", "1000",
         "--checkpoints", str(output_dir / "checkpoints"), "--log-dir", str(output_dir / "log"),
     ]
