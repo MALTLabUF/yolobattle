@@ -66,7 +66,9 @@ class LegoGearsPolicyTest(unittest.TestCase):
         ), 7000)
 
     def test_pytorch_command_passes_the_profile_learning_rate(self):
-        profile = replace(get_profile("LegoGearsPyTorchYOLOv4"), epochs=7000)
+        profile = replace(
+            get_profile("LegoGearsPyTorchYOLOv4"), epochs=7000, early_stopping_patience=0,
+        )
         with patch.dict("os.environ", {"PYTORCH_YOLOV4_ROOT": "/opt/pytorch-yolov4"}):
             command = build_command(
                 profile, Path("model.cfg"), Path("train.txt"), Path("valid.txt"), Path("output"),
@@ -79,6 +81,7 @@ class LegoGearsPolicyTest(unittest.TestCase):
         self.assertEqual(command[command.index("--jitter") + 1], "0.3")
         self.assertEqual(command[command.index("--flip") + 1], "0")
         self.assertEqual(command[command.index("--eval-interval") + 1], "100")
+        self.assertEqual(command[command.index("--early-stopping-patience") + 1], "0")
 
     def test_pytorch_schedule_matches_the_darknet_iteration_schedule(self):
         self.assertEqual(darknet_style_schedule(7000), (1000, (5600, 6300), (0.1, 0.1)))

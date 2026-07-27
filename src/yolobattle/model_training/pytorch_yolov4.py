@@ -151,5 +151,6 @@ def build_command(profile: TrainProfile, model_cfg: Path, train_labels: Path, va
         "--hue", str(profile.hue), "--saturation", str(profile.saturation),
         "--exposure", str(profile.exposure), "--flip", str(profile.flip),
         "--eval-interval", "100", "--checkpoint-interval", "1000",
+        "--early-stopping-patience", str(profile.early_stopping_patience),
         "--checkpoints", str(output_dir / "checkpoints"), "--log-dir", str(output_dir / "log"),
     ]
