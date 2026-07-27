@@ -634,6 +634,10 @@ if __name__ == "__main__":
     ap.add_argument("--num-gpus", type=int, default=None, help="Request N GPUs")
     ap.add_argument("--iterations", type=int, default=None, help="Optimizer-update budget override")
     ap.add_argument("--learning-rate", type=float, default=None, help="Learning rate override")
+    ap.add_argument(
+        "--early-stopping-patience", type=int, default=None,
+        help="PyTorch YOLOv4: validations without AP50-95 improvement before stopping; 0 disables it",
+    )
     ap.add_argument("--color-preset", default=None, help="Color preset override")
     ap.add_argument("--ultra-model", default=None, help="Ultralytics model override")
 
@@ -678,6 +682,14 @@ if __name__ == "__main__":
 
     if args.learning_rate is not None:
         p = replace(p, learning_rate=float(args.learning_rate))
+        overrides_used = True
+
+    if args.early_stopping_patience is not None:
+        if p.backend != "pytorch_yolov4":
+            ap.error("--early-stopping-patience is only supported by pytorch_yolov4 profiles")
+        if args.early_stopping_patience < 0:
+            ap.error("--early-stopping-patience must be non-negative")
+        p = replace(p, early_stopping_patience=int(args.early_stopping_patience))
         overrides_used = True
 
     if args.color_preset is not None:
