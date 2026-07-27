@@ -2,7 +2,7 @@ FROM pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime
 
 ARG UID=1000
 ARG GID=1000
-ARG TIANXIAOMO_REF=4527dc23de6b764c2a4bb9d1d2f46390fe709fc8
+ARG TIANXIAOMO_REF=4feebd3e4ae13aeab774528ec33c6a15b0042bdf
 LABEL org.yolobattle.uid="${UID}" \
       org.yolobattle.gid="${GID}"
 
@@ -12,7 +12,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTORCH_YOLOV4_ROOT=/opt/pytorch-yolov4
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git libgl1 libglib2.0-0 \
+ && apt-get install -y --no-install-recommends fio git libgl1 libglib2.0-0 \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt
