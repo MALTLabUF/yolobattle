@@ -392,8 +392,13 @@ def _run_container(args: argparse.Namespace) -> None:
             envs[k] = v
 
     train_cmd = ["python", "-u", "-m", "yolobattle.model_training.train", "--profile", args.profile]
-    if args.train_args:
-        train_cmd.extend(args.train_args)
+    train_args = list(args.train_args or ())
+    # argparse.REMAINDER retains the conventional separator.  It is for the
+    # docker CLI only and must not be forwarded to the training parser.
+    if train_args[:1] == ["--"]:
+        train_args.pop(0)
+    if train_args:
+        train_cmd.extend(train_args)
     train_cmd_str = _shell_join(train_cmd)
 
     if backend == "darknet":
@@ -401,7 +406,7 @@ def _run_container(args: argparse.Namespace) -> None:
     else:
         command = train_cmd_str
     shm_size = args.shm_size
-    if shm_size is None and backend == "ultralytics":
+    if shm_size is None and backend in {"ultralytics", "pytorch_yolov4"}:
         shm_size = "8g"
     shm_bytes = _parse_shm_size(shm_size) if shm_size else None
 
@@ -501,7 +506,7 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument(
         "--shm-size",
         default=None,
-        help="Shared memory size (e.g. 8g, 2g). Default: 8g for ultralytics, none for darknet.",
+        help="Shared memory size (e.g. 8g, 2g). Default: 8g for ultralytics and PyTorch YOLOv4.",
     )
     run.add_argument("--no-gpu", action="store_true", help="Disable GPU request.")
     run.add_argument("--build", action="store_true", help="Build image before running.")
