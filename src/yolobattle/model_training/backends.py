@@ -28,7 +28,7 @@ from yolobattle.model_training.export_coco_dets import (
     export_tianxiaomo_detections,
     export_ultra_detections,
 )
-from yolobattle.model_training.profiles import TrainProfile
+from yolobattle.model_training.profile_models import TrainProfile
 
 
 @dataclass(frozen=True)
