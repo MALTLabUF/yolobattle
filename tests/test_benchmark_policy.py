@@ -66,9 +66,7 @@ class LegoGearsPolicyTest(unittest.TestCase):
         ), 7000)
 
     def test_pytorch_command_passes_the_profile_learning_rate(self):
-        profile = replace(
-            get_profile("LegoGearsPyTorchYOLOv4"), epochs=7000, early_stopping_patience=0,
-        )
+        profile = replace(get_profile("LegoGearsPyTorchYOLOv4"), epochs=7000)
         with patch.dict("os.environ", {"PYTORCH_YOLOV4_ROOT": "/opt/pytorch-yolov4"}):
             command = build_command(
                 profile, Path("model.cfg"), Path("train.txt"), Path("valid.txt"), Path("output"),
