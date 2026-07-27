@@ -7,6 +7,7 @@ COCO detection export.  Dataset-independent benchmark reporting remains in
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 from dataclasses import dataclass, replace
@@ -98,6 +99,25 @@ def _checkpoint_selector(profile) -> str:
     if selector not in {"final", "backend_default"}:
         raise ValueError(f"Unsupported checkpoint selector: {selector}")
     return selector
+
+
+def _tianxiaomo_checkpoint(output_dir: Path, *, selector: str) -> Path:
+    """Select the final or validation-best checkpoint like the other backends."""
+    checkpoints = list((output_dir / "checkpoints").glob("Yolov4_epoch*.pth"))
+    if not checkpoints:
+        raise RuntimeError("Tianxiaomo training produced no checkpoint")
+    if selector == "backend_default":
+        best = output_dir / "checkpoints" / "Yolov4_best.pth"
+        if best.is_file():
+            return best
+
+    def update_number(path: Path) -> int:
+        match = re.fullmatch(r"Yolov4_epoch(\d+)\.pth", path.name)
+        return int(match.group(1)) if match else -1
+
+    # The fork writes this at its final update (or when early stopping ends),
+    # so it is the PyTorch counterpart of Ultralytics' last.pt.
+    return max(checkpoints, key=update_number)
 
 
 class DarknetBackend:
@@ -227,10 +247,9 @@ class TianxiaomoBackend:
         return train, valid, profile.epochs
 
     def export_coco(self, profile, *, output_dir, gt_json, det_json, valid_list, threshold, gpu_indices):
-        _checkpoint_selector(profile)
-        checkpoints = sorted((output_dir / "checkpoints").glob("Yolov4_epoch*.pth"), key=lambda p: p.stat().st_mtime)
-        if not checkpoints: raise RuntimeError("Tianxiaomo training produced no checkpoint")
-        export_tianxiaomo_detections(repo_path=os.environ["PYTORCH_YOLOV4_ROOT"], checkpoint=str(checkpoints[-1]),
+        selector = _checkpoint_selector(profile)
+        checkpoint = _tianxiaomo_checkpoint(output_dir, selector=selector)
+        export_tianxiaomo_detections(repo_path=os.environ["PYTORCH_YOLOV4_ROOT"], checkpoint=str(checkpoint),
             cfg_path=str(output_dir / f"{Path(profile.data_path).stem}.pytorch.cfg"), ann_json=gt_json,
             out_json=det_json, images_txt=valid_list, width=profile.width, height=profile.height,
             conf=threshold, iou=profile.policy.export_nms_iou if profile.policy else 0.45, device="cuda")
