@@ -37,6 +37,10 @@ class DatasetSpec:
     predefined_train_dir: str | None = None
     predefined_valid_dir: str | None = None
     class_names: Tuple[str, ...] = tuple()
+    # Ground-truth source for framework-independent COCO evaluation.  ``auto``
+    # retains legacy JSON-first detection; known datasets should declare their
+    # actual format so unrelated metadata cannot change the evaluation path.
+    annotation_format: str = "auto"
 
 
 @dataclass(frozen=True)
@@ -57,6 +61,7 @@ class DatasetRecipe:
     predefined_train_dir: str | None = None
     predefined_valid_dir: str | None = None
     class_names: Tuple[str, ...] = tuple()
+    annotation_format: str = "auto"
 
     def at(self, root: str, *, split_seed: int = 9001) -> DatasetSpec:
         return DatasetSpec(root=root, split_seed=split_seed, **self.__dict__)
@@ -132,6 +137,7 @@ FISHEYE8K_OFFICIAL_V1 = BenchmarkDefinition(
         exts=(".jpg", ".jpeg", ".png"), require_existing=True,
         predefined_train_dir="train/images", predefined_valid_dir="test/images",
         class_names=("Bus", "Bike", "Car", "Pedestrian", "Truck"),
+        annotation_format="yolo",
     ),
 )
 
