@@ -1,6 +1,7 @@
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from yolobattle.model_training.benchmark_policy import (
@@ -19,7 +20,12 @@ from yolobattle.model_training.benchmark_definitions import (
     LEATHER_V1,
     LEGO_GEARS_V1,
 )
-from yolobattle.model_training.pytorch_yolov4 import build_command, darknet_style_schedule, epochs_for_iterations
+from yolobattle.model_training.pytorch_yolov4 import (
+    apply_yolo_anchor_layout,
+    build_command,
+    darknet_style_schedule,
+    epochs_for_iterations,
+)
 from yolobattle.model_training.profiles import effective_policy, get_profile
 
 
@@ -54,13 +60,13 @@ class LegoGearsPolicyTest(unittest.TestCase):
             self.assertIsNone(profile.policy)
 
     def test_pytorch_epochs_are_derived_from_iterations(self):
-        # 72 examples / batch 16 with drop_last gives 4 updates per epoch.
+        # 72 examples / batch 64 with drop_last gives 1 update per epoch.
         self.assertEqual(epochs_for_iterations(
-            iterations=7000, batch_size=16, subdivisions=1, train_examples=72,
-        ), 1750)
+            iterations=7000, batch_size=64, subdivisions=1, train_examples=72,
+        ), 7000)
 
     def test_pytorch_command_passes_the_profile_learning_rate(self):
-        profile = replace(get_profile("LegoGearsPyTorchYOLOv4"), epochs=1750)
+        profile = replace(get_profile("LegoGearsPyTorchYOLOv4"), epochs=7000)
         with patch.dict("os.environ", {"PYTORCH_YOLOV4_ROOT": "/opt/pytorch-yolov4"}):
             command = build_command(
                 profile, Path("model.cfg"), Path("train.txt"), Path("valid.txt"), Path("output"),
@@ -69,10 +75,34 @@ class LegoGearsPolicyTest(unittest.TestCase):
         self.assertEqual(command[command.index("--burn-in") + 1], "1000")
         self.assertEqual(command[command.index("--steps") + 1:command.index("--steps") + 3], ["5600", "6300"])
         self.assertEqual(command[command.index("--scales") + 1:command.index("--scales") + 3], ["0.1", "0.1"])
+        self.assertEqual(command[command.index("--batch") + 1], "64")
+        self.assertEqual(command[command.index("--jitter") + 1], "0.3")
+        self.assertEqual(command[command.index("--flip") + 1], "0")
+        self.assertEqual(command[command.index("--eval-interval") + 1], "100")
 
     def test_pytorch_schedule_matches_the_darknet_iteration_schedule(self):
         self.assertEqual(darknet_style_schedule(7000), (1000, (5600, 6300), (0.1, 0.1)))
         self.assertEqual(darknet_style_schedule(8), (5, (6, 7), (0.1, 0.1)))
+
+    def test_pytorch_cfg_applies_the_supplied_darknet_anchor_layout(self):
+        with TemporaryDirectory() as temp_dir:
+            cfg = Path(temp_dir) / "model.cfg"
+            cfg.write_text(
+                "[net]\nwidth=224\n\n[convolutional]\nfilters=30\n\n[yolo]\n"
+                "mask=3,4,5\nanchors=10,14, 23,27, 37,58, 81,82, 135,169, 344,319\nnum=6\n\n"
+                "[convolutional]\nfilters=30\n\n[yolo]\n"
+                "mask=1,2,3\nanchors=10,14, 23,27, 37,58, 81,82, 135,169, 344,319\nnum=6\n",
+                encoding="utf-8",
+            )
+            apply_yolo_anchor_layout(
+                cfg,
+                anchors=((8, 8), (10, 10), (15, 13), (45, 44), (68, 65), (77, 74)),
+                masks=((3, 4, 5), (0, 1, 2)),
+            )
+            patched = cfg.read_text(encoding="utf-8")
+        self.assertIn("anchors=8, 8, 10, 10, 15, 13, 45, 44, 68, 65, 77, 74", patched)
+        self.assertIn("mask=3,4,5", patched)
+        self.assertIn("mask=0,1,2", patched)
 
     def test_other_framework_pairs_share_their_canonical_policy(self):
         cases = (
