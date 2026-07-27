@@ -2,7 +2,7 @@ FROM pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime
 
 ARG UID=1000
 ARG GID=1000
-ARG TIANXIAOMO_REF=5e0da86e969a400c1989f083447c03c921d070c3
+ARG TIANXIAOMO_REF=848e868675c83c7ee025676f9e5ebe122e9c659f
 LABEL org.yolobattle.uid="${UID}" \
       org.yolobattle.gid="${GID}"
 

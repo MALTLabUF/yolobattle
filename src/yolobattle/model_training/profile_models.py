@@ -43,8 +43,8 @@ class TrainProfile:
     ultra_data: str = "LG_v2.yaml"
     ultra_model: str = "yolo11n.pt"
     pytorch_cfg: str = "cfg/yolov4-tiny.cfg"
-    # PyTorch-YOLOv4 only.  Zero runs the complete update budget.
-    early_stopping_patience: int = 10
+    # PyTorch-YOLOv4 only.  Zero runs the complete scheduled update budget.
+    early_stopping_patience: int = 0
     policy: BenchmarkPolicy | None = None
     benchmark: BenchmarkDefinition | None = None
     training_seed: Optional[int] = None
