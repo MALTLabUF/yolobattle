@@ -137,6 +137,7 @@ def build_command(profile: TrainProfile, model_cfg: Path, train_labels: Path, va
     dataset_root = profile.dataset.root if profile.dataset else ""
     train_script = Path(os.environ["PYTORCH_YOLOV4_ROOT"]) / "train.py"
     burn_in, steps, scales = darknet_style_schedule(profile.iterations)
+    training_seed = profile.training_seed if profile.training_seed is not None else profile.dataset.split_seed
     return [
         "python", str(train_script), "-g", "0", "--cfg", str(model_cfg),
         "--width", str(profile.width), "--height", str(profile.height), "-classes", str(profile.dataset.classes),
@@ -146,7 +147,7 @@ def build_command(profile: TrainProfile, model_cfg: Path, train_labels: Path, va
         "-optimizer", "sgd", "-l", str(profile.learning_rate),
         "--burn-in", str(burn_in), "--steps", *(str(step) for step in steps),
         "--scales", *(str(scale) for scale in scales),
-        "--seed", str(profile.dataset.split_seed),
+        "--seed", str(training_seed),
         "--mosaic", str(profile.mosaic), "--jitter", str(profile.jitter),
         "--hue", str(profile.hue), "--saturation", str(profile.saturation),
         "--exposure", str(profile.exposure), "--flip", str(profile.flip),

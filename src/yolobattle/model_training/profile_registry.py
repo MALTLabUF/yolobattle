@@ -20,6 +20,17 @@ from yolobattle.model_training.profile_models import (
 )
 
 
+# Internal base for the public legacy-style PyTorch sweep below.  Keeping it
+# out of PROFILES prevents a fixed-budget PyTorch variant from being selected
+# accidentally alongside the equalized sweep.
+_LEGOGEARS_PYTORCH_BASE = lego_gears_profile(
+    root="LegoGears_v2", name="LegoGearsPyTorchYOLOv4", backend="pytorch_yolov4",
+    data_path="", cfg_out="", batch_size=64, subdivisions=1, learning_rate=0.00261,
+    mosaic=0, jitter=0.3, hue=0.1, saturation=1.5, exposure=1.5, flip=0,
+    num_gpus=1, pytorch_cfg="cfg/yolov4-tiny.cfg",
+)
+
+
 BENCHMARK_PROFILES: Dict[str, TrainProfile] = {
     "LegoGearsDarknetBenchmark": lego_gears_profile(
         root="/workspace/LegoGears_v2", name="LegoGearsDarknetBenchmark", backend="darknet",
@@ -34,12 +45,6 @@ BENCHMARK_PROFILES: Dict[str, TrainProfile] = {
         templates=(), sweep_keys=("num_gpus", "ultra_model"),
         sweep_values={"num_gpus": (1,), "ultra_model": ("yolo11n.pt", "yolo11s.pt", "yolo26n.pt", "yolo26s.pt")},
         ultra_data="", ultra_model="yolo11n.pt",
-    ),
-    "LegoGearsPyTorchYOLOv4": lego_gears_profile(
-        root="LegoGears_v2", name="LegoGearsPyTorchYOLOv4", backend="pytorch_yolov4",
-        data_path="", cfg_out="", batch_size=64, subdivisions=1, learning_rate=0.00261,
-        mosaic=0, jitter=0.3, hue=0.1, saturation=1.5, exposure=1.5, flip=0,
-        num_gpus=1, pytorch_cfg="cfg/yolov4-tiny.cfg",
     ),
     "LeatherDarknetBenchmark": benchmark_profile(
         definition=LEATHER_V1, root="/workspace/leather", name="LeatherDarknetBenchmark", backend="darknet",
@@ -109,6 +114,13 @@ LEGACY_SWEEP_PROFILES: Dict[str, TrainProfile] = {
     "LegoGearsUltra": legacy_variant(
         BENCHMARK_PROFILES["LegoGearsUltraBenchmark"], "LegoGearsUltra",
         val_fracs=LEGO_GEARS_V1.policy.validation_fractions, sweep_keys=("val_fracs", "num_gpus", "ultra_model"),
+    ),
+    "LegoGearsPyTorchYOLOv4": legacy_variant(
+        _LEGOGEARS_PYTORCH_BASE, "LegoGearsPyTorchYOLOv4",
+        # The 80% validation split leaves only 18 images for training, fewer
+        # than PyTorch-YOLOv4's 64-image micro-batch.  The supported sweep
+        # therefore covers the three comparable split sizes.
+        val_fracs=(0.10, 0.15, 0.20), sweep_keys=("val_fracs",),
     ),
     "LeatherDarknet": legacy_variant(
         BENCHMARK_PROFILES["LeatherDarknetBenchmark"], "LeatherDarknet",
