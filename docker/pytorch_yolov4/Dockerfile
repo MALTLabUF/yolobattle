@@ -45,4 +45,12 @@ ENV PYTHONPATH=/opt/pytorch-yolov4/src
 WORKDIR /opt/pytorch-yolov4
 RUN python smoke_test.py
 
+# The training command writes to bind mounts.  Run it with the caller's UID/GID
+# (provided as build arguments) so those artifacts remain writable on the host.
+RUN groupadd -g ${GID} appgroup \
+ && useradd -m -u ${UID} -g ${GID} -s /bin/bash appuser
+
+ENV HOME=/home/appuser
+USER appuser
+
 CMD ["python", "-m", "yolobattle.model_training.train", "--profile", "LegoGearsPyTorchYOLOv4"]
