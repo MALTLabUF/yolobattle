@@ -26,7 +26,7 @@ from yolobattle.model_training.pytorch_yolov4 import (
     darknet_style_schedule,
     epochs_for_iterations,
 )
-from yolobattle.model_training.profiles import effective_policy, get_profile
+from yolobattle.model_training.profiles import get_profile
 
 
 class LegoGearsPolicyTest(unittest.TestCase):
@@ -34,7 +34,6 @@ class LegoGearsPolicyTest(unittest.TestCase):
         profiles = [
             get_profile("LegoGearsDarknetBenchmark"),
             get_profile("LegoGearsUltraBenchmark"),
-            get_profile("LegoGearsPyTorchYOLOv4"),
         ]
         expected = LEGO_GEARS_224X160_V1
         for profile in profiles:
@@ -47,10 +46,9 @@ class LegoGearsPolicyTest(unittest.TestCase):
 
     def test_training_budget_remains_framework_specific(self):
         profiles = [get_profile(name) for name in (
-            "LegoGearsDarknetBenchmark", "LegoGearsUltraBenchmark", "LegoGearsPyTorchYOLOv4",
+            "LegoGearsDarknetBenchmark", "LegoGearsUltraBenchmark",
         )]
-        self.assertEqual([profile.iterations for profile in profiles], [7000, 7000, 7000])
-        self.assertIsNone(get_profile("LegoGearsPyTorchYOLOv4").epochs)
+        self.assertEqual([profile.iterations for profile in profiles], [7000, 7000])
 
     def test_legacy_legogears_profiles_keep_the_validation_sweep(self):
         for name in ("LegoGearsDarknet", "LegoGearsUltra"):
@@ -59,6 +57,11 @@ class LegoGearsPolicyTest(unittest.TestCase):
             self.assertIn("val_fracs", profile.sweep_keys)
             self.assertIsNone(profile.policy)
 
+        pytorch = get_profile("LegoGearsPyTorchYOLOv4")
+        self.assertEqual(pytorch.val_fracs, (0.10, 0.15, 0.20))
+        self.assertIn("val_fracs", pytorch.sweep_keys)
+        self.assertIsNone(pytorch.policy)
+
     def test_pytorch_epochs_are_derived_from_iterations(self):
         # 72 examples / batch 64 with drop_last gives 1 update per epoch.
         self.assertEqual(epochs_for_iterations(
@@ -66,7 +69,7 @@ class LegoGearsPolicyTest(unittest.TestCase):
         ), 7000)
 
     def test_pytorch_command_passes_the_profile_learning_rate(self):
-        profile = replace(get_profile("LegoGearsPyTorchYOLOv4"), epochs=7000)
+        profile = replace(get_profile("LegoGearsPyTorchYOLOv4"), epochs=7000, training_seed=12345)
         with patch.dict("os.environ", {"PYTORCH_YOLOV4_ROOT": "/opt/pytorch-yolov4"}):
             command = build_command(
                 profile, Path("model.cfg"), Path("train.txt"), Path("valid.txt"), Path("output"),
@@ -80,6 +83,7 @@ class LegoGearsPolicyTest(unittest.TestCase):
         self.assertEqual(command[command.index("--flip") + 1], "0")
         self.assertEqual(command[command.index("--eval-interval") + 1], "100")
         self.assertEqual(command[command.index("--early-stopping-patience") + 1], "0")
+        self.assertEqual(command[command.index("--seed") + 1], "12345")
 
     def test_pytorch_schedule_matches_the_darknet_iteration_schedule(self):
         self.assertEqual(darknet_style_schedule(7000), (1000, (5600, 6300), (0.1, 0.1)))
@@ -145,7 +149,7 @@ class LegoGearsPolicyTest(unittest.TestCase):
 
     def test_canonical_profiles_resolve_dataset_from_one_benchmark_definition(self):
         cases = (
-            (LEGO_GEARS_V1, ("LegoGearsDarknetBenchmark", "LegoGearsUltraBenchmark", "LegoGearsPyTorchYOLOv4")),
+            (LEGO_GEARS_V1, ("LegoGearsDarknetBenchmark", "LegoGearsUltraBenchmark")),
             (LEATHER_V1, ("LeatherDarknetBenchmark", "LeatherUltraBenchmark")),
             (FISHEYE_TRAFFIC_LOCAL_V1, ("FisheyeTrafficDarknetBenchmark", "FisheyeTrafficUltraBenchmark")),
             (FISHEYE8K_OFFICIAL_V1, ("FishEye8KDarknetBenchmark", "FishEye8KUltraBenchmark")),
@@ -166,10 +170,6 @@ class LegoGearsPolicyTest(unittest.TestCase):
         self.assertEqual(LEATHER_V1.fingerprint(), fingerprint)
         changed_recipe = replace(LEATHER_V1.dataset_recipe, classes=6)
         self.assertNotEqual(replace(LEATHER_V1, dataset_recipe=changed_recipe).fingerprint(), fingerprint)
-
-    def test_effective_policy_records_an_iteration_override(self):
-        overridden = replace(get_profile("LegoGearsPyTorchYOLOv4"), iterations=8)
-        self.assertEqual(effective_policy(overridden).iterations, 8)
 
     def test_fisheye8k_policy_records_its_official_split(self):
         self.assertEqual(FISHEYE8K_OFFICIAL_1280X1280_V1.split_strategy, "official")

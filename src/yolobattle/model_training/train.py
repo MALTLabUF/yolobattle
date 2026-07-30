@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import os, re, csv, getpass, subprocess, zipfile, unicodedata, argparse, math
+import os, re, csv, getpass, subprocess, zipfile, unicodedata, argparse, math, secrets
 from pathlib import Path
 from datetime import datetime
 from threading import Thread, Event
@@ -214,6 +214,10 @@ def _with_ultra_reference_epochs(profile: TrainProfile, reference_data_path: str
 def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
              flat_output: bool = False) -> None:
     p = replace(p, policy=effective_policy(p))
+    # Keep the data split reproducible while making repeated PyTorch jobs
+    # independent training trials unless the caller explicitly pins a seed.
+    if p.backend == "pytorch_yolov4" and p.training_seed is None:
+        p = replace(p, training_seed=secrets.randbelow(2**31 - 1) + 1)
     backend = get_backend(p.backend)
     policy = p.policy
     user = effective_username()
@@ -633,6 +637,10 @@ if __name__ == "__main__":
     ap.add_argument("--val-frac", type=float, default=None, help="Validation fraction override")
     ap.add_argument("--num-gpus", type=int, default=None, help="Request N GPUs")
     ap.add_argument("--iterations", type=int, default=None, help="Optimizer-update budget override")
+    ap.add_argument(
+        "--training-seed", type=int, default=None,
+        help="PyTorch YOLOv4 training RNG seed; omit to generate and record a fresh seed per run",
+    )
     ap.add_argument("--learning-rate", type=float, default=None, help="Learning rate override")
     ap.add_argument(
         "--early-stopping-patience", type=int, default=None,
@@ -679,6 +687,15 @@ if __name__ == "__main__":
             ap.error("--iterations must be positive")
         p = replace(p, iterations=int(args.iterations))
         overrides_used = True
+
+    if args.training_seed is not None:
+        if p.backend != "pytorch_yolov4":
+            ap.error("--training-seed is only supported by pytorch_yolov4 profiles")
+        if args.training_seed < 0:
+            ap.error("--training-seed must be non-negative")
+        # A seed controls reproducibility; it does not turn a sweep into a
+        # single-run invocation.
+        p = replace(p, training_seed=int(args.training_seed))
 
     if args.learning_rate is not None:
         p = replace(p, learning_rate=float(args.learning_rate))
@@ -757,7 +774,7 @@ if __name__ == "__main__":
 
 
     reference_data_path: str | None = None
-    if p.backend in ("darknet", "ultralytics") and getattr(p, "dataset", None):
+    if p.backend in ("darknet", "ultralytics", "pytorch_yolov4") and getattr(p, "dataset", None):
         ref_vf = _first_val_frac(base_profile)
         if ref_vf is not None:
             reference_data_path, _ = build_split_for(ref_vf, p.dataset, out_dir=WRITABLE_BASE)
@@ -854,8 +871,39 @@ if __name__ == "__main__":
                 # flat_output=overrides_used
             )
     elif p.backend == "pytorch_yolov4":
-        # The adapter creates its own framework-specific split/labels in the
-        # output directory; the shared runner owns everything after training.
-        run_once(p=p, template=None, out_root=out_root)
+        # Mirror Darknet's legacy split-sweep equalization. The adapter builds
+        # its own labels in each run directory, but this shared split provides
+        # the exact train count needed to set its update budget first.
+        if sweep_keys:
+            grid_lists = [_values_for_key(p, key) for key in sweep_keys]
+            for combo in itertools.product(*grid_lists):
+                p_variant = p
+                combo_map = dict(zip(sweep_keys, combo))
+                for key, value in combo_map.items():
+                    p_variant = _apply_one(p_variant, key, value)
+
+                vf = float(combo_map["val_fracs"]) if "val_fracs" in combo_map else float(p_variant.val_fracs[0])
+                data_path, _ = build_split_for(vf, p_variant.dataset, out_dir=WRITABLE_BASE)
+                target_epochs = _target_epochs_from_reference(p_variant, reference_data_path)
+                p_variant = equalize_for_split(
+                    p_variant,
+                    data_path=data_path,
+                    mode="iterations",
+                    target_epochs=target_epochs,
+                )
+                run_once(p=p_variant, template=None, out_root=out_root)
+        else:
+            # The canonical 20% run remains at the policy's 7,000 updates;
+            # this has an effect only when a different split size is selected.
+            vf = float(p.val_fracs[0])
+            data_path, _ = build_split_for(vf, p.dataset, out_dir=WRITABLE_BASE)
+            target_epochs = _target_epochs_from_reference(p, reference_data_path)
+            p = equalize_for_split(
+                p,
+                data_path=data_path,
+                mode="iterations",
+                target_epochs=target_epochs,
+            )
+            run_once(p=p, template=None, out_root=out_root)
     else:
         raise ValueError(f"Unsupported backend: {p.backend}")
