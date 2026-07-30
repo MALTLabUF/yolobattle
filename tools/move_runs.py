@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import csv
+import re
 import shutil
 import sys
 
@@ -12,6 +13,11 @@ DST = Path("../runs-yolobattle/outputs")
 # Phrases that must appear in training_output.log
 DARKNET_OK = 'Training iteration has reached max batch limit'
 ULTRA_OK = 'epochs completed'
+# Tianxiaomo's PyTorch-YOLOv4 logger emits both of these values at the end of a
+# successful run.  Capturing and comparing them keeps this independent of the
+# iteration budget selected by a profile.
+PYTORCH_FINAL_UPDATE = re.compile(r"Training update\s+(?P<current>\d+)\s*/\s*(?P<total>\d+)")
+PYTORCH_CHECKPOINT = re.compile(r"Checkpoint\s+(?P<step>\d+)\s+saved\s*!")
 
 
 def _read_first_row(run_dir: Path) -> dict[str, str]:
@@ -32,12 +38,16 @@ def infer_backend(run_dir: Path, row: dict[str, str]) -> str | None:
         return "darknet"
     if "ultralytics" in backend:
         return "ultralytics"
+    if "pytorch_yolov4" in backend:
+        return "pytorch_yolov4"
 
     run_path = str(run_dir)
     if "Darknet" in run_path:
         return "darknet"
     if "Ultra" in run_path:
         return "ultralytics"
+    if "PyTorchYOLOv4" in run_path:
+        return "pytorch_yolov4"
     return None
 
 
@@ -46,6 +56,8 @@ def infer_ok_phrase(backend: str | None) -> str | None:
         return DARKNET_OK
     if backend == "ultralytics":
         return ULTRA_OK
+    if backend == "pytorch_yolov4":
+        return "pytorch_yolov4"
     return None
 
 
@@ -54,7 +66,19 @@ def is_valid_run(log_path: Path, ok_phrase: str) -> bool:
         txt = log_path.read_text(encoding='utf-8', errors='ignore')
     except Exception:
         return False
-    return ok_phrase in txt
+    if ok_phrase != "pytorch_yolov4":
+        return ok_phrase in txt
+
+    # A checkpoint is also written periodically, so it alone is not proof of
+    # completion.  Require a final update (current == configured total) and a
+    # checkpoint for that same update; neither value is hard-coded.
+    completed_updates = {
+        match.group("current")
+        for match in PYTORCH_FINAL_UPDATE.finditer(txt)
+        if match.group("current") == match.group("total")
+    }
+    checkpoint_updates = {match.group("step") for match in PYTORCH_CHECKPOINT.finditer(txt)}
+    return bool(completed_updates & checkpoint_updates)
 
 
 def _dest_for_run(root: Path, run_dir: Path, row: dict[str, str]) -> Path | None:
