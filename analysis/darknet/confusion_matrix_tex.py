@@ -23,6 +23,10 @@ from plot_common import (
 from scipy import stats
 
 
+PYTORCH_FINAL_UPDATE = re.compile(r"Training update\s+(?P<current>\d+)\s*/\s*(?P<total>\d+)")
+PYTORCH_CHECKPOINT = re.compile(r"Checkpoint\s+(?P<step>\d+)\s+saved\s*!")
+
+
 def _read_text_if_exists(path: str) -> str | None:
     if not path or not os.path.isfile(path):
         return None
@@ -59,11 +63,24 @@ def _is_completed_run_by_sentinel(run_dir: str, framework: str) -> bool:
     fw = (framework or "").lower().strip()
     if fw == "darknet":
         sentinel = "Training iteration has reached max batch limit"
+        valid = sentinel in log_text
+    elif fw == "pytorch_yolov4":
+        # Checkpoints are periodic.  A PyTorch run is complete only when the
+        # last configured update was reached and that same update was saved.
+        completed_updates = {
+            match.group("current")
+            for match in PYTORCH_FINAL_UPDATE.finditer(log_text)
+            if match.group("current") == match.group("total")
+        }
+        checkpoint_updates = {match.group("step") for match in PYTORCH_CHECKPOINT.finditer(log_text)}
+        valid = bool(completed_updates & checkpoint_updates)
+        sentinel = "final update and matching checkpoint"
     else:
         # ultralytics (or default)
         sentinel = "epochs completed in"
+        valid = sentinel in log_text
 
-    if sentinel not in log_text:
+    if not valid:
         print(f"  [INVALID] Sentinel not found ({fw}): {sentinel}")
         print(f"           Log: {log_path}")
         print(f"           Run: {run_dir}")
@@ -103,10 +120,15 @@ def collect_confusion_records(base_dirs: List[str]) -> pd.DataFrame:
             else:
                 yolo = os.path.basename(os.path.dirname(root))
 
-            # Determine framework (darknet vs ultralytics)
-            framework = "ultralytics"  # default
+            # Prefer the recorded backend; path inference preserves support
+            # for older benchmark CSVs that lack this column.
+            framework = str(row.get("Backend", "")).strip().lower()
+            if framework not in {"darknet", "ultralytics", "pytorch_yolov4"}:
+                framework = "ultralytics"
             if "darknet" in csv_path.lower() or "darknet" in root.lower():
                 framework = "darknet"
+            elif "pytorch_yolov4" in csv_path.lower() or "pytorch_yolov4" in root.lower():
+                framework = "pytorch_yolov4"
 
             # ENFORCE COMPLETION SENTINEL (if enabled via flag passed into function)
             if not _is_completed_run_by_sentinel(root, framework):
