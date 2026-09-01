@@ -1,0 +1,63 @@
+name: Build Darknet Apptainer image
+
+on:
+  workflow_dispatch:
+    inputs:
+      darknet_ref:
+        description: "Darknet branch, tag, or commit to build"
+        required: false
+        default: "feature/map-reporting-fixes-superclean"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build yolobattle-darknet.sif
+    runs-on: ubuntu-24.04
+    env:
+      TARGET_REF: ${{ inputs.darknet_ref }}
+
+    steps:
+      - name: Check out yolobattle
+        uses: actions/checkout@v4
+
+      - name: Install Apptainer
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes apptainer
+          apptainer --version
+
+      - name: Build SIF
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="${GITHUB_WORKSPACE}/yolobattle-darknet.sif"
+
+          # The definition file installs packages during %post, so use the
+          # runner's sudo capability for a writable/root-owned build.
+          sudo apptainer build --force "$image" apptainer/darknet/apptainer.def
+          sudo chown "$(id -u):$(id -g)" "$image"
+          sha256sum yolobattle-darknet.sif > yolobattle-darknet.sif.sha256
+
+      - name: Validate image and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s yolobattle-darknet.sif
+          sha256sum --check yolobattle-darknet.sif.sha256
+          apptainer inspect yolobattle-darknet.sif
+
+      - name: Upload SIF for users
+        uses: actions/upload-artifact@v4
+        with:
+          name: yolobattle-darknet-sif
+          path: |
+            yolobattle-darknet.sif
+            yolobattle-darknet.sif.sha256
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
