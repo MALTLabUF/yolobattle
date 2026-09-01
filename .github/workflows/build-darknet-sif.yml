@@ -28,6 +28,9 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
+          sudo apt-get install --yes software-properties-common
+          sudo add-apt-repository --yes ppa:apptainer/ppa
+          sudo apt-get update
           sudo apt-get install --yes apptainer
           apptainer --version
 
