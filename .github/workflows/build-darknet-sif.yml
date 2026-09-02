@@ -62,5 +62,5 @@ jobs:
             yolobattle-darknet.sif
             yolobattle-darknet.sif.sha256
           if-no-files-found: error
-          retention-days: 90
+          retention-days: 7
           compression-level: 0
