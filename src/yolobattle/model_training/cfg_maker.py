@@ -16,6 +16,7 @@ python cfg_maker.py \
 
 from __future__ import annotations
 import argparse, re, sys, math, random
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict
@@ -82,6 +83,15 @@ def parse_data_file(data_path: Path) -> Dict[str, str]:
 # -------------------- IO helpers --------------------
 
 def fetch_template_text(url: str) -> str:
+    if os.environ.get("YOLOBATTLE_OFFLINE") == "1":
+        bundle = Path(os.environ.get(
+            "YOLOBATTLE_OFFLINE_BUNDLE", "/opt/yolobattle/offline-assets"
+        ))
+        template_path = bundle / "darknet" / "cfg" / url.rsplit("/", 1)[-1]
+        if not template_path.is_file():
+            sys.exit(f"[offline] bundled Darknet cfg template is missing: {template_path}")
+        return template_path.read_text(encoding="utf-8", errors="ignore")
+
     req = Request(url, headers={"User-Agent": "cfg_maker/1.3"})
     try:
         with urlopen(req, timeout=30) as resp:

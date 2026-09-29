@@ -250,7 +250,21 @@ def _run_image(args: argparse.Namespace) -> None:
     root = _repo_root()
 
     image_path = Path(args.image).resolve() if args.image else _default_image(root, backend)
-    if args.build or not image_path.is_file():
+    if args.offline and backend != "darknet":
+        raise SystemExit("Offline bundle mode is currently available for the Darknet Lego Gears image only.")
+    if args.offline and args.profile not in {"LegoGearsDarknetBenchmark", "LegoGearsDarknet"}:
+        raise SystemExit(
+            "This offline SIF contains the Lego Gears dataset and Darknet tiny cfg templates; "
+            "use profile LegoGearsDarknetBenchmark or LegoGearsDarknet."
+        )
+    if args.offline and args.build:
+        raise SystemExit("--offline uses the prebuilt offline SIF; it cannot build an image at run time.")
+    if args.offline and not image_path.is_file():
+        raise SystemExit(
+            f"Offline SIF not found: {image_path}. Download the Lego Gears offline SIF from the GitHub Actions artifact."
+        )
+
+    if not args.offline and (args.build or not image_path.is_file()):
         if not image_path.is_file():
             print(f"Image '{image_path}' not found; building it first.")
         build_args = argparse.Namespace(
@@ -280,6 +294,9 @@ def _run_image(args: argparse.Namespace) -> None:
 
     if backend == "ultralytics":
         client.setenv("DATA_ROOT", "/workspace/.cache/datasets")
+
+    if args.offline:
+        client.setenv("YOLOBATTLE_OFFLINE", "1")
 
     client.setenv("TRUE_USER", os.environ.get("USERNAME") or os.environ.get("USER") or "unknown")
     client.setenv("ACTUAL_PWD", str(Path.cwd()))
@@ -460,6 +477,7 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument("--image", default=None, help="Path to .sif image.")
     run.add_argument("--outputs", default=None, help="Host outputs directory.")
     run.add_argument("--build", action="store_true", help="Build image before running.")
+    run.add_argument("--offline", action="store_true", help="Use only assets bundled in the Darknet Lego Gears SIF.")
     run.add_argument("--sudo", action="store_true", help="Use sudo for build when auto-building.")
     run.add_argument("--fakeroot", action="store_true", help="Use --fakeroot when auto-building.")
     run.add_argument("--force", action="store_true", help="Overwrite existing image when auto-building.")

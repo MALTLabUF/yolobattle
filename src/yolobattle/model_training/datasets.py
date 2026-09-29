@@ -160,8 +160,9 @@ def ensure_download_once(spec: DatasetSpec, *, force: bool = False) -> Path:
     Returns the dataset root Path.
     """
     root = Path(spec.root).resolve()
+    offline = os.environ.get("YOLOBATTLE_OFFLINE") == "1"
 
-        # -------- Local-only mode: fail fast, no writes, no marker --------
+    # -------- Local-only mode: fail fast, no writes, no marker --------
     if getattr(spec, "require_existing", False):
         if not root.exists():
             raise FileNotFoundError(f"[local-only] dataset root not found: {root}")
@@ -208,19 +209,38 @@ def ensure_download_once(spec: DatasetSpec, *, force: bool = False) -> Path:
         url = spec.url
         meta = {"profile_dataset": asdict(spec)}
         if not url:
+            if offline:
+                raise RuntimeError(
+                    f"[offline] no dataset URL or staged data is available for {root}"
+                )
             _eprint(f"[info] no URL provided; assuming files already present at {root}")
             root.mkdir(parents=True, exist_ok=True)
             _mark_complete(root, meta)
             return root
 
-        tmpdir = Path(tempfile.mkdtemp(prefix="dsdl_"))
-        try:
+        tmpdir: Path | None = None
+        if offline:
+            bundle = Path(os.environ.get(
+                "YOLOBATTLE_OFFLINE_BUNDLE", "/opt/yolobattle/offline-assets"
+            ))
+            fname = url.split("?")[0].rsplit("/", 1)[-1] or "dataset.download"
+            archive = bundle / "datasets" / fname
+            if not archive.is_file():
+                raise FileNotFoundError(
+                    f"[offline] bundled dataset archive is missing: {archive}"
+                )
+            _eprint(f"[offline] using bundled archive {archive}")
+        else:
+            tmpdir = Path(tempfile.mkdtemp(prefix="dsdl_"))
             fname = url.split("?")[0].rsplit("/", 1)[-1] or "dataset.download"
             archive = tmpdir / fname
-            try:
-                _download(url, archive)
-            except (HTTPError, URLError) as ex:
-                raise RuntimeError(f"download failed: {ex}")
+
+        try:
+            if not offline:
+                try:
+                    _download(url, archive)
+                except (HTTPError, URLError) as ex:
+                    raise RuntimeError(f"download failed: {ex}")
 
             if spec.sha256:
                 got = _sha256(archive)
@@ -256,7 +276,8 @@ def ensure_download_once(spec: DatasetSpec, *, force: bool = False) -> Path:
                 raise RuntimeError(f"Extracted dataset does not contain {_expected_dirs(spec)} at {root}")
 
         finally:
-            shutil.rmtree(tmpdir, ignore_errors=True)
+            if tmpdir is not None:
+                shutil.rmtree(tmpdir, ignore_errors=True)
 
         _mark_complete(root, meta)
         _eprint(f"[ok] dataset ready at {root}")

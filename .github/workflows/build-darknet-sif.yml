@@ -8,16 +8,23 @@ on:
         required: false
         default: "feature/map-reporting-fixes-superclean"
         type: string
+      include_legogears_offline:
+        description: "Include Lego Gears assets for offline runs"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: Build yolobattle-darknet.sif
+    name: Build Darknet Apptainer SIF
     runs-on: ubuntu-24.04
     env:
       TARGET_REF: ${{ inputs.darknet_ref }}
+      INCLUDE_LEGOGEARS_OFFLINE: ${{ inputs.include_legogears_offline }}
+      IMAGE_NAME: ${{ inputs.include_legogears_offline && 'yolobattle-darknet-legogears-offline.sif' || 'yolobattle-darknet.sif' }}
 
     steps:
       - name: Check out yolobattle
@@ -34,33 +41,113 @@ jobs:
           sudo apt-get install --yes apptainer
           apptainer --version
 
+      - name: Prepare Lego Gears offline assets
+        if: ${{ inputs.include_legogears_offline }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          offline_dir="${GITHUB_WORKSPACE}/apptainer/darknet/offline-assets"
+          mkdir -p "$offline_dir/datasets" "$offline_dir/darknet/cfg"
+
+          dataset_url="https://www.ccoderun.ca/programming/2024-05-01_LegoGears/legogears_2_dataset.zip"
+          dataset_sha256="126980d3e43986bbd3d785ac16f6430e9bf3b726e65a30574bb3c9ba06a4462e"
+          curl --fail --location --retry 3 "$dataset_url" \
+            --output "$offline_dir/datasets/legogears_2_dataset.zip"
+          printf '%s  %s\n' "$dataset_sha256" "$offline_dir/datasets/legogears_2_dataset.zip" \
+            | sha256sum --check
+
+          curl --fail --location --retry 3 \
+            "https://raw.githubusercontent.com/hank-ai/darknet/master/cfg/yolov4-tiny.cfg" \
+            --output "$offline_dir/darknet/cfg/yolov4-tiny.cfg"
+          curl --fail --location --retry 3 \
+            "https://raw.githubusercontent.com/hank-ai/darknet/master/cfg/yolov7-tiny.cfg" \
+            --output "$offline_dir/darknet/cfg/yolov7-tiny.cfg"
+
+          source_checkout="${RUNNER_TEMP}/yolobattle-darknet-source"
+          git clone https://codeberg.org/jpfleischer/darknet.git "$source_checkout"
+          git -C "$source_checkout" fetch --all --tags --prune
+
+          if git -C "$source_checkout" ls-remote --exit-code --heads origin "$TARGET_REF" >/dev/null 2>&1; then
+            git -C "$source_checkout" checkout -B "$TARGET_REF" "origin/$TARGET_REF"
+          elif git -C "$source_checkout" ls-remote --exit-code --tags origin "$TARGET_REF" >/dev/null 2>&1; then
+            git -C "$source_checkout" checkout --detach "refs/tags/$TARGET_REF"
+          elif git -C "$source_checkout" rev-parse --verify "$TARGET_REF^{commit}" >/dev/null 2>&1; then
+            git -C "$source_checkout" checkout --detach "$TARGET_REF"
+          else
+            echo "Darknet ref not found: $TARGET_REF" >&2
+            exit 1
+          fi
+
+          darknet_commit="$(git -C "$source_checkout" rev-parse HEAD)"
+          git -C "$source_checkout" bundle create \
+            "$offline_dir/darknet/darknet-repository.bundle" --all
+          printf '%s\n' "$darknet_commit" > "$offline_dir/darknet/darknet-commit.txt"
+          rm -rf "$source_checkout"
+
+          TARGET_REF="$TARGET_REF" DARKNET_COMMIT="$darknet_commit" python3 - "$offline_dir/manifest.json" <<'PY'
+          import json
+          import os
+          import sys
+
+          manifest = {
+              "profiles": ["LegoGearsDarknetBenchmark", "LegoGearsDarknet"],
+              "darknet_ref": os.environ["TARGET_REF"],
+              "darknet_commit": os.environ["DARKNET_COMMIT"],
+              "dataset_archive": "datasets/legogears_2_dataset.zip",
+              "dataset_sha256": "126980d3e43986bbd3d785ac16f6430e9bf3b726e65a30574bb3c9ba06a4462e",
+              "darknet_cfg_templates": ["yolov4-tiny.cfg", "yolov7-tiny.cfg"],
+          }
+          with open(sys.argv[1], "w", encoding="utf-8") as output:
+              json.dump(manifest, output, indent=2)
+              output.write("\n")
+          PY
+
+          (cd "$offline_dir" && find . -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > SHA256SUMS)
+
       - name: Build SIF
         shell: bash
         run: |
           set -euo pipefail
-          image="${GITHUB_WORKSPACE}/yolobattle-darknet.sif"
+          image="${GITHUB_WORKSPACE}/${IMAGE_NAME}"
 
           # The definition file installs packages during %post, so use the
           # runner's sudo capability for a writable/root-owned build.
           sudo apptainer build --force "$image" apptainer/darknet/apptainer.def
           sudo chown "$(id -u):$(id -g)" "$image"
-          sha256sum yolobattle-darknet.sif > yolobattle-darknet.sif.sha256
+          sha256sum "$IMAGE_NAME" > "$IMAGE_NAME.sha256"
 
       - name: Validate image and checksum
         shell: bash
         run: |
           set -euo pipefail
-          test -s yolobattle-darknet.sif
-          sha256sum --check yolobattle-darknet.sif.sha256
-          apptainer inspect yolobattle-darknet.sif
+          test -s "$IMAGE_NAME"
+          sha256sum --check "$IMAGE_NAME.sha256"
+          apptainer inspect "$IMAGE_NAME"
+          if [[ "$INCLUDE_LEGOGEARS_OFFLINE" == "true" ]]; then
+            apptainer exec "$IMAGE_NAME" bash -lc \
+              'cd /opt/yolobattle/offline-assets && sha256sum --check SHA256SUMS'
+            apptainer exec "$IMAGE_NAME" test -s \
+              /opt/yolobattle/offline-assets/manifest.json
+            apptainer exec "$IMAGE_NAME" bash -lc '
+              set -euo pipefail
+              bundle=/opt/yolobattle/offline-assets/darknet/darknet-repository.bundle
+              expected=$(cat /opt/yolobattle/offline-assets/darknet/darknet-commit.txt)
+              tmp=$(mktemp -d)
+              trap "rm -rf \"$tmp\"" EXIT
+              git clone --no-checkout "$bundle" "$tmp/darknet"
+              git -C "$tmp/darknet" checkout --detach "$expected"
+              test "$(git -C "$tmp/darknet" rev-parse HEAD)" = "$expected"
+            '
+          fi
 
       - name: Upload SIF for users
         uses: actions/upload-artifact@v4
         with:
-          name: yolobattle-darknet-sif
+          name: ${{ inputs.include_legogears_offline && 'yolobattle-darknet-legogears-offline-sif' || 'yolobattle-darknet-sif' }}
           path: |
-            yolobattle-darknet.sif
-            yolobattle-darknet.sif.sha256
+            ${{ env.IMAGE_NAME }}
+            ${{ env.IMAGE_NAME }}.sha256
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
