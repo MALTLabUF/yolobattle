@@ -101,6 +101,61 @@ the runtime mount path plus framework-specific training settings.
 - `yolobattle apptainer slurm --backend darknet`
 - `yolobattle apptainer slurm --backend ultralytics --batch`
 
+### Download the Darknet SIF from GitHub Actions
+
+The manual `Build Darknet Apptainer image` workflow builds
+`apptainer/darknet/apptainer.def` on an Ubuntu GitHub-hosted runner. Open the
+repository's **Actions** tab, select the workflow, choose **Run workflow**, and
+download the artifact from the completed run. Leave the
+`include_legogears_offline` input set to `false` for the existing online image;
+its artifact contains `yolobattle-darknet.sif` and its SHA-256 checksum.
+
+On an HPC system, verify and use the downloaded image with:
+
+```bash
+sha256sum --check yolobattle-darknet.sif.sha256
+yolobattle apptainer run --image "$PWD/yolobattle-darknet.sif" --profile <PROFILE>
+```
+
+To build one self-contained offline image for the Lego Gears Darknet profiles,
+set the `include_legogears_offline` workflow input to `true`. The workflow
+downloads and packages the Lego Gears archive, the `yolov4-tiny`/`yolov7-tiny`
+cfg templates, and a Git bundle for the selected Darknet ref and commit. The
+source is still compiled when the container starts, so the build can use the
+GPU visible on the HPC node. The resulting artifact contains
+`yolobattle-darknet-legogears-offline.sif` and its SHA-256 checksum.
+
+Verify and run that image with:
+
+```bash
+sha256sum --check yolobattle-darknet-legogears-offline.sif.sha256
+yolobattle apptainer run \
+  --image "$PWD/yolobattle-darknet-legogears-offline.sif" \
+  --profile LegoGearsDarknetBenchmark \
+  --offline
+```
+
+The SIF also contains the training code and enables offline mode when bundled
+assets are present, so it can be launched directly with Apptainer without the
+host-side `yolobattle` Python wrapper:
+
+```bash
+mkdir -p offline-workspace artifacts/outputs
+apptainer run --nv \
+  --bind "$PWD/offline-workspace:/workspace,$PWD/artifacts/outputs:/outputs" \
+  "$PWD/yolobattle-darknet-legogears-offline.sif" \
+  --profile LegoGearsDarknetBenchmark
+```
+
+The first run extracts the bundled archive into the writable workspace. The
+dataset and generated split files stay there; training outputs go to
+`artifacts/outputs`.
+
+The offline SIF uses only its bundled assets and errors if one is missing. The
+wrapper does not auto-build a missing offline image. The bundle supports
+`LegoGearsDarknetBenchmark` and `LegoGearsDarknet`; the regular SIF keeps the
+existing online behavior for other profiles.
+
 ## Slurm Batch (cloudmesh-ee API)
 
 - Requires `cloudmesh-ee` and `cloudmesh-rivanna` installed in the active Python environment.

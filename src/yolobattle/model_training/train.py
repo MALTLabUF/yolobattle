@@ -60,7 +60,8 @@ def effective_username() -> str:
 
 def darknet_path() -> str:
     if "APPTAINER_ENVIRONMENT" in os.environ:
-        return "/host_workspace/darknet/build/src-cli/darknet"
+        parent = Path(os.environ.get("DARKNET_PARENT", "/workspace"))
+        return str(parent / "darknet/build/src-cli/darknet")
     elif os.path.exists("/.dockerenv"):
         return "/workspace/darknet/build/src-cli/darknet"
     return "darknet"
