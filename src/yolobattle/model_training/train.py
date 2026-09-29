@@ -59,7 +59,7 @@ def effective_username() -> str:
     return getpass.getuser()
 
 def darknet_path() -> str:
-    if "APPTAINER_ENVIRONMENT" in os.environ:
+    if "APPTAINER_ENVIRONMENT" in os.environ or "SINGULARITY_ENVIRONMENT" in os.environ:
         parent = Path(os.environ.get("DARKNET_PARENT", "/workspace"))
         return str(parent / "darknet/build/src-cli/darknet")
     elif os.path.exists("/.dockerenv"):
@@ -749,7 +749,9 @@ if __name__ == "__main__":
 
         
     # new (no helpers, single inline check)
-    inside_container = os.path.exists("/.dockerenv") or ("APPTAINER_ENVIRONMENT" in os.environ)
+    inside_container = os.path.exists("/.dockerenv") or any(
+        name in os.environ for name in ("APPTAINER_ENVIRONMENT", "SINGULARITY_ENVIRONMENT")
+    )
 
     if overrides_used:
         # If any CLI override is used, keep artifacts in the directory
