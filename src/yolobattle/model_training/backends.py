@@ -87,7 +87,7 @@ def _copy_lists(data_path: str, output_dir: Path) -> None:
 
 
 def _darknet_binary() -> str:
-    if "APPTAINER_ENVIRONMENT" in os.environ:
+    if "APPTAINER_ENVIRONMENT" in os.environ or "SINGULARITY_ENVIRONMENT" in os.environ:
         parent = Path(os.environ.get("DARKNET_PARENT", "/workspace"))
         return str(parent / "darknet/build/src-cli/darknet")
     if os.path.exists("/.dockerenv"):
