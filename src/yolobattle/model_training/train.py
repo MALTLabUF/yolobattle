@@ -59,7 +59,11 @@ def effective_username() -> str:
     return getpass.getuser()
 
 def darknet_path() -> str:
-    if "APPTAINER_ENVIRONMENT" in os.environ or "SINGULARITY_ENVIRONMENT" in os.environ:
+    if (
+        os.environ.get("YOLOBATTLE_CONTAINER") == "1"
+        or "APPTAINER_ENVIRONMENT" in os.environ
+        or "SINGULARITY_ENVIRONMENT" in os.environ
+    ):
         parent = Path(os.environ.get("DARKNET_PARENT", "/workspace"))
         return str(parent / "darknet/build/src-cli/darknet")
     elif os.path.exists("/.dockerenv"):
@@ -214,6 +218,9 @@ def _with_ultra_reference_epochs(profile: TrainProfile, reference_data_path: str
 # ---------- one run ----------
 def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
              flat_output: bool = False) -> None:
+    # run_once changes into each output directory. Keep every later path
+    # absolute so logs, cfg files, and artifacts are not resolved twice.
+    out_root = os.path.abspath(out_root)
     p = replace(p, policy=effective_policy(p))
     # Keep the data split reproducible while making repeated PyTorch jobs
     # independent training trials unless the caller explicitly pins a seed.
@@ -749,8 +756,10 @@ if __name__ == "__main__":
 
         
     # new (no helpers, single inline check)
-    inside_container = os.path.exists("/.dockerenv") or any(
-        name in os.environ for name in ("APPTAINER_ENVIRONMENT", "SINGULARITY_ENVIRONMENT")
+    inside_container = (
+        os.environ.get("YOLOBATTLE_CONTAINER") == "1"
+        or os.path.exists("/.dockerenv")
+        or any(name in os.environ for name in ("APPTAINER_ENVIRONMENT", "SINGULARITY_ENVIRONMENT"))
     )
 
     if overrides_used:
@@ -761,6 +770,10 @@ if __name__ == "__main__":
         out_root_base = "/outputs" if inside_container else "artifacts/outputs"
         out_root = os.path.join(out_root_base, p.name)
         os.makedirs(out_root, exist_ok=True)
+
+    # run_once changes the process working directory. Resolve the root before
+    # entering any run so sweeps/repeats keep using this same absolute path.
+    out_root = os.path.abspath(out_root)
 
     # --- make sure dataset exists at the expected path before split generation ---
     if getattr(p, "dataset", None):
