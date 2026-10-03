@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .adhoc import DarknetProject
 
 from yolobattle.model_training.benchmark_definitions import BenchmarkDefinition, DatasetSpec, LEGO_GEARS_V1
 from yolobattle.model_training.benchmark_policy import BenchmarkPolicy
@@ -51,6 +54,10 @@ class TrainProfile:
     num_gpus: Optional[int] = None
     sweep_keys: Tuple[str, ...] = tuple()
     sweep_values: Dict[str, Tuple[Any, ...]] = field(default_factory=dict)
+    darknet_project: DarknetProject | None = None
+    # Ad-hoc Darknet runs use an existing .data split, staged into the run folder.
+    custom_data: bool = False
+    cfg_source: str | None = None
 
 
 def benchmark_profile(

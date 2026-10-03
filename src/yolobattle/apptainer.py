@@ -246,7 +246,15 @@ def _build_image(args: argparse.Namespace) -> Path:
 
 def _run_image(args: argparse.Namespace) -> None:
     client = _client()
-    backend = _resolve_backend(profile=args.profile, backend=args.backend)
+    custom_name = getattr(args, "custom_profile", None)
+    adhoc = getattr(args, "adhoc", None)
+    if (custom_name or adhoc) and args.backend not in (None, "darknet"):
+        raise SystemExit("Custom profiles currently support the Darknet backend.")
+    if adhoc:
+        adhoc = str(Path(adhoc).expanduser().resolve())
+        if not Path(adhoc).is_dir():
+            raise SystemExit(f"Ad hoc dataset folder not found: {adhoc}")
+    backend = _resolve_backend(profile=args.profile, backend="darknet" if (custom_name or adhoc) else args.backend)
     root = _repo_root()
 
     image_path = Path(args.image).resolve() if args.image else _default_image(root, backend)
@@ -303,7 +311,12 @@ def _run_image(args: argparse.Namespace) -> None:
     client.setenv("WRITABLE_BASE", "/workspace/.cache/splits")
     client.setenv("DARKNET_PARENT", "/host_workspace")
 
-    args_list = ["--profile", args.profile] + _normalize_train_args(args.train_args)
+    profile_args = ["--custom-profile", custom_name] if custom_name else ["--profile", args.profile]
+    if adhoc:
+        # Preserve absolute host paths in existing .data files and image lists.
+        binds.append(f"{adhoc}:{adhoc}:ro")
+        profile_args = ["--adhoc", adhoc]
+    args_list = profile_args + _normalize_train_args(args.train_args)
 
     run_kwargs = dict(
         args=args_list,
@@ -473,7 +486,10 @@ def main(argv: list[str] | None = None) -> None:
 
     run = subparsers.add_parser("run", help="Run an Apptainer image.")
     run.add_argument("--backend", default=None, help="Override backend (darknet|ultralytics).")
-    run.add_argument("--profile", default="LegoGearsDarknetBenchmark", help="Training profile name.")
+    profile_choice = run.add_mutually_exclusive_group()
+    profile_choice.add_argument("--profile", default="LegoGearsDarknetBenchmark", help="Training profile name.")
+    profile_choice.add_argument("--custom-profile", metavar="NAME", help="Custom Darknet profile; pass its data/cfg settings after --.")
+    profile_choice.add_argument("--adhoc", metavar="FOLDER", help="Bind and run an existing Darknet project folder; optional settings follow --.")
     run.add_argument("--image", default=None, help="Path to .sif image.")
     run.add_argument("--outputs", default=None, help="Host outputs directory.")
     run.add_argument("--build", action="store_true", help="Build image before running.")
