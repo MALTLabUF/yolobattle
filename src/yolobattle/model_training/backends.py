@@ -86,6 +86,19 @@ def _copy_lists(data_path: str, output_dir: Path) -> None:
             shutil.copy2(source, output_dir / destination)
 
 
+def _darknet_checkpoints(profile, kind: str) -> list[Path]:
+    cfg = Path(profile.cfg_out)
+    folders = []
+    backup = _data_values(profile.data_path).get("backup")
+    if backup:
+        folder = Path(backup)
+        folders.append(folder if folder.is_absolute() else Path(profile.data_path).parent / folder)
+    if not profile.custom_data:
+        folders.extend((Path(os.environ.get("WRITABLE_BASE", "/workspace/.cache/splits")), cfg.parent))
+    return [folder / filename for folder in dict.fromkeys(folders)
+            for filename in (f"{cfg.stem}_{kind}.weights", f"{kind}.weights")]
+
+
 def _darknet_binary() -> str:
     if (
         os.environ.get("YOLOBATTLE_CONTAINER") == "1"
