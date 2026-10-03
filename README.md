@@ -37,6 +37,136 @@ make slurm
 - `yolobattle -m train --profile <PROFILE>`
 - `yolobattle train --profile <PROFILE>`
 
+### Ad hoc Darknet dataset folders
+
+Use an existing Darknet project without adding a named profile:
+
+```bash
+yolobattle train --adhoc /path/to/handWM6
+```
+
+The folder must contain one `.cfg` and one `.data` file. The `.data` file must
+specify `classes`, `names`, `train`, and `valid`, pointing to the names file and
+existing image lists. Images and YOLO `.txt` labels must be accessible inside
+the container. The cfg supplies the network architecture, width, height,
+batch, subdivisions, max_batches, and learning_rate. The architecture and
+training settings are preserved verbatim, including anchors, augmentation,
+and the learning-rate schedule. The cfg filename identifies the model in
+reports; a custom cfg does not reliably declare a YOLO version number.
+
+The existing train/validation lists are preserved, with their paths normalized
+in the output folder. There is no download, re-splitting, anchor calculation,
+or budget equalization. Source files are not modified. Checkpoints and the
+usual benchmark reports are written under `/outputs/adhoc_<folder>/...` in
+the container, or `artifacts/outputs/adhoc_<folder>/...` when run directly.
+
+Adjacent `.txt` annotations and separate `images/` / `labels/` directories
+use the same label-resolution helper as dataset-backed profiles. Where needed,
+Darknet receives a run-local adjacent-label view under `darknet_inputs/`, while
+evaluation retains the original image paths. That input view is excluded from
+the benchmark ZIP. `adhoc.json` records the cfg hash and the path-prefix
+relocations used, including whether each was automatic or explicit.
+
+`--custom-profile NAME --data-path FILE --cfg-path FILE` uses this same loader
+and preparation, with the data file's parent as the project root. It also
+accepts `--weights` and `--path-map`. Custom profiles that generate a cfg from
+a template retain their separate template-generation path.
+
+For the Singularity command, after updating the SIF's training code:
+
+```bash
+DATASET="$HOME/handWM6"  # change to your dataset folder
+SINGULARITYENV_APPTAINER_ENVIRONMENT=1 singularity run --nv \
+  --bind "$HOME/yolobattle-workspace:/workspace" \
+  --bind "$HOME/yolobattle-outputs:/outputs" \
+  --bind "$DATASET:$DATASET:ro" \
+  "$HOME/yolobattle-darknet-legogears-offline.sif" \
+  --adhoc "$DATASET"
+```
+
+**An already-built SIF does not contain this new CLI option.** Rebuild it from
+the updated checkout, or copy the updated `yolobattle/src` directory to the HPC
+host and add `--bind "$HOME/yolobattle/src:/opt/app/src:ro"` before the SIF
+filename (adjust the host path to your checkout). This reuses the existing
+offline image's Darknet build assets; the ad hoc cfg and dataset come from
+your folder.
+
+The host-side wrapper also supports this option and mounts the folder at its
+original absolute path:
+
+```bash
+yolobattle apptainer run --image "$HOME/yolobattle-darknet-legogears-offline.sif" \
+  --adhoc "$HOME/handWM6"
+```
+
+If there are multiple cfg/data files, select them with
+`--cfg-path handWM6.cfg --data-path handWM6.data`. In ad hoc mode these paths
+are relative to the selected folder, or absolute. Training starts from scratch
+unless you explicitly supply `--weights weights/handWM6_last.weights`.
+Training overrides such as `--iterations` are rejected in this mode; edit a
+copy of the cfg to change its training settings. `--num-gpus` is supported.
+
+Relative paths resolve beside the referring file, then relative to the project
+folder. For a self-contained project moved from another machine, ad hoc mode
+automatically relocates absolute paths using the local names/split files and
+the project directory name, preserving the paths below the project root.
+An optional explicit mapping overrides automatic resolution, for example
+`--path-map /old/location/handWM6=/datasets/handWM6`.
+Mappings also support Windows prefixes such as `--path-map 'C:/old/handWM6=/datasets/handWM6'`
+and may be repeated. With `yolobattle apptainer run`, put these training options
+after `--`. Use `--profile`, `--custom-profile`, or `--adhoc` one at a time.
+
+#### Moving a dataset between machines and containers
+
+`--adhoc` discovers the project files and automatically resolves relocated
+paths for a self-contained dataset. It infers old roots by matching the names
+and split files to files under the selected folder. Image paths are resolved
+using those roots or an exact project-directory component, keeping the nested
+directory structure. This applies to `.data` and every image entry in both
+train/validation lists, replacing the three manual `sed` edits.
+The originals remain unchanged; corrected copies are written in the run's
+output directory. The `.data` backup directory is redirected there as well.
+
+For example, if the files still reference `/home/nisreen/nn/handWM6` but now
+live at `/mnt/lustre/users/nalaas/nn/handWM6`, mount that host folder at
+`/datasets/handWM6` and supply that **container path** to `--adhoc`:
+
+```bash
+SINGULARITYENV_APPTAINER_ENVIRONMENT=1 singularity run --nv \
+  --bind "$HOME/yolobattle-workspace:/workspace" \
+  --bind "$HOME/yolobattle-outputs:/outputs" \
+  --bind "$HOME/yolobattle/src:/opt/app/src:ro" \
+  --bind "/mnt/lustre/users/nalaas/nn/handWM6:/datasets/handWM6:ro" \
+  "$HOME/yolobattle-darknet-legogears-offline.sif" \
+  --adhoc /datasets/handWM6
+```
+
+The source bind assumes the updated checkout was copied to
+`$HOME/yolobattle`; omit it if the SIF already contains the updated code.
+Paths partly edited to the new host location also resolve automatically when
+they retain the same project-directory component (`handWM6` in this example).
+Automatic relocation prefers matching files inside the selected project,
+even if an older copy is still accessible elsewhere. It does not recursively
+search for images by basename. If multiple local metadata paths match, it
+reports ambiguity instead of choosing one.
+
+Use `--path-map` for an ambiguous layout or files stored outside the project.
+For example, `--path-map /home/nisreen/nn/handWM6=/datasets/handWM6` explicitly
+selects that destination. Explicit mappings take priority and must point to
+existing files. Multiple old prefixes can map to the same directory. Mappings replace
+directory prefixes, not arbitrary substrings, and the longest matching prefix
+wins. They do not create mounts: the mapped destination must be accessible
+inside the container. Missing files produce an error before training starts.
+
+With the `yolobattle apptainer run` wrapper, the automatic bind preserves the
+host's absolute path. The same automatic relocation works inside that mount:
+
+```bash
+yolobattle apptainer run \
+  --image "$HOME/yolobattle-darknet-legogears-offline.sif" \
+  --adhoc /mnt/lustre/users/nalaas/nn/handWM6
+```
+
 ## Docker
 
 - `yolobattle docker build`

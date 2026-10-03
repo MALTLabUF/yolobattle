@@ -21,6 +21,7 @@ from yolobattle.model_training.dataset_setup import make_split, IMG_EXTS
 
 from yolobattle.model_training.datasets import ensure_download_once
 from yolobattle.model_training.backends import get_backend
+from yolobattle.model_training.custom_profile import custom_darknet_profile
 
 WRITABLE_BASE = Path(os.environ.get("WRITABLE_BASE", "/workspace/.cache/splits"))
 
@@ -414,7 +415,7 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
     train_count, valid_count, approx_epochs = backend.counts(p, Path(output_dir))
 
 
-    color_preset_for_csv = p.color_preset if p.color_preset is not None else "off"
+    color_preset_for_csv = "source cfg" if p.cfg_source else (p.color_preset if p.color_preset is not None else "off")
 
     # defaults so names exist even on failure
     coco_ap5095 = coco_ap50 = coco_ap75 = None
@@ -442,18 +443,22 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
         gt_json = os.path.join(output_dir, "val.coco.gt.json")
 
         if not os.path.isfile(gt_json):
-            if not getattr(p, "dataset", None):
-                raise RuntimeError("COCO GT requires p.dataset")
-
             data_fields = parse_darknet_data_file(p.data_path) if p.data_path else {}
             generated_names = data_fields.get("names")
-
-            build_coco_gt_for_dataset(
-                dataset=p.dataset,
-                valid_list=Path(output_dir) / "valid.txt",
-                out_json=Path(gt_json),
-                names_path=Path(generated_names) if generated_names else None,
-            )
+            if p.custom_data:
+                from yolobattle.model_training.coco_build_gt import build_coco_gt_from_yolo_lists
+                build_coco_gt_from_yolo_lists(
+                    list_file=val_list, out_json=gt_json, names_path=generated_names,
+                )
+            else:
+                if not getattr(p, "dataset", None):
+                    raise RuntimeError("COCO GT requires p.dataset")
+                build_coco_gt_for_dataset(
+                    dataset=p.dataset,
+                    valid_list=Path(output_dir) / "valid.txt",
+                    out_json=Path(gt_json),
+                    names_path=Path(generated_names) if generated_names else None,
+                )
 
         export_thresh = policy.export_confidence if policy else 0.01
 
@@ -569,7 +574,7 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
         "Color Preset": color_preset_for_csv,
 
         # Seeds (explicit provenance)
-        "Split Seed": getattr(p.dataset, "split_seed", None),
+        "Split Seed": None if p.custom_data else getattr(p.dataset, "split_seed", None),
         "Training Seed": getattr(p, "training_seed", None),
         "Repeat": ee_repeat,  # <- NEW: repeat index from EE_REPEAT env (will be empty in CSV if None)
 
@@ -627,18 +632,37 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
     bundle = f"benchmark_bundle__{user}__{gpu_name_safe}__{cpu_name_safe}__{tag}__{now}.zip"
     bundle_path = Path(output_dir) / bundle
     with zipfile.ZipFile(bundle_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
-        for q in Path(output_dir).rglob("*"):
-            if not q.is_file(): continue
-            if q.name == bundle: continue
-            if q.suffix.lower() == ".weights": continue
-            z.write(q, arcname=q.relative_to(output_dir))
+        for directory, subdirs, filenames in os.walk(output_dir):
+            if p.darknet_project and Path(directory) == Path(output_dir):
+                # Prune native views rather than walking/stat-ing every image
+                # again. These can contain copied images on non-symlink hosts.
+                subdirs[:] = [name for name in subdirs if name != "darknet_inputs"]
+            for filename in filenames:
+                q = Path(directory) / filename
+                if q.name == bundle or q.suffix.lower() == ".weights":
+                    continue
+                if q.is_file():
+                    z.write(q, arcname=q.relative_to(output_dir))
     print(f"[zip] {bundle_path}")
 
 
 # ---------- main ----------
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Train with a named profile (profiles may contain multiple templates).")
-    ap.add_argument("--profile", default="LegoGearsDarknetBenchmark", help="Profile name in profiles.PROFILES")
+    ap = argparse.ArgumentParser(description="Train with a named profile or an existing Darknet project.")
+    profile_choice = ap.add_mutually_exclusive_group()
+    profile_choice.add_argument("--profile", default="LegoGearsDarknetBenchmark", help="Profile name in profiles.PROFILES")
+    profile_choice.add_argument("--custom-profile", metavar="NAME", help="Create a Darknet profile from an existing .data split and CLI settings")
+    profile_choice.add_argument("--adhoc", metavar="FOLDER", help="Discover an existing Darknet cfg and data file in a folder")
+    ap.add_argument("--weights", help="Initial weights for a supplied cfg, relative to the project folder or absolute; default: train from scratch")
+    ap.add_argument("--path-map", action="append", default=[], metavar="OLD=NEW",
+                    help="Override automatic relocation for a supplied cfg's data and image lists; repeatable")
+    custom = ap.add_argument_group("custom Darknet profile")
+    custom.add_argument("--data-path", help="Existing Darknet .data file for --custom-profile or --adhoc")
+    custom.add_argument("--cfg-path", help="Use an existing .cfg unchanged; training settings are read from its [net] section")
+    custom.add_argument("--width", type=int, help="Input width for a custom template-generated cfg")
+    custom.add_argument("--height", type=int, help="Input height for a custom template-generated cfg")
+    custom.add_argument("--batch-size", type=int, help="Batch size for a custom template-generated cfg")
+    custom.add_argument("--subdivisions", type=int, help="Subdivisions for a custom template-generated cfg")
 
     #cloudmesh ee
     ap.add_argument("--template", default=None, help="Darknet template override (e.g., yolov7-tiny)")
@@ -668,7 +692,44 @@ if __name__ == "__main__":
 
     args = ap.parse_args()
 
-    base_profile = get_profile(args.profile)
+    custom_fields = (args.data_path, args.cfg_path, args.width, args.height, args.batch_size, args.subdivisions)
+    if args.adhoc:
+        for option in ("template", "val_frac", "iterations", "learning_rate", "color_preset",
+                       "ultra_model", "dataset_root", "training_seed", "early_stopping_patience",
+                       "width", "height", "batch_size", "subdivisions"):
+            if getattr(args, option) is not None:
+                ap.error(f"--{option.replace('_', '-')} cannot be combined with --adhoc; edit the source cfg/data instead")
+        from yolobattle.model_training.adhoc import load_adhoc_profile
+        try:
+            base_profile = load_adhoc_profile(args.adhoc, cfg=args.cfg_path, data=args.data_path,
+                                              weights=args.weights, path_maps=args.path_map)
+        except (ValueError, OSError) as exc:
+            ap.error(str(exc))
+        print(f"[adhoc] {base_profile.name}: {base_profile.width}x{base_profile.height}, "
+              f"{base_profile.iterations} iterations, existing train/validation lists")
+    elif args.custom_profile:
+        if args.dataset_root is not None or args.val_frac is not None:
+            ap.error("Custom profiles preserve the split in --data-path; omit --dataset-root and --val-frac")
+        if args.ultra_model is not None:
+            ap.error("Custom profiles currently support the Darknet backend")
+        if args.cfg_path and args.color_preset is not None:
+            ap.error("--cfg-path preserves cfg settings; omit --color-preset")
+        try:
+            base_profile = custom_darknet_profile(
+                name=args.custom_profile, data_path=args.data_path, cfg_path=args.cfg_path,
+                template=args.template, width=args.width, height=args.height,
+                batch_size=args.batch_size, subdivisions=args.subdivisions,
+                iterations=args.iterations, learning_rate=args.learning_rate,
+                weights=args.weights, path_maps=args.path_map,
+            )
+        except (ValueError, OSError) as exc:
+            ap.error(str(exc))
+    else:
+        if any(value is not None for value in custom_fields):
+            ap.error("--data-path, --cfg-path, --width, --height, --batch-size and --subdivisions require --custom-profile")
+        base_profile = get_profile(args.profile)
+    if not (args.adhoc or (args.custom_profile and args.cfg_path)) and (args.weights or args.path_map):
+        ap.error("--weights and --path-map require --adhoc or --custom-profile with --cfg-path")
     p = base_profile
 
     #cloudmesh ee
@@ -762,7 +823,7 @@ if __name__ == "__main__":
         or any(name in os.environ for name in ("APPTAINER_ENVIRONMENT", "SINGULARITY_ENVIRONMENT"))
     )
 
-    if overrides_used:
+    if overrides_used and not (args.custom_profile or args.adhoc):
         # If any CLI override is used, keep artifacts in the directory
         # where this script was invoked (no nested /outputs/.../benchmark__...).
         out_root = original_cwd
@@ -775,6 +836,9 @@ if __name__ == "__main__":
     # entering any run so sweeps/repeats keep using this same absolute path.
     out_root = os.path.abspath(out_root)
 
+    if p.darknet_project is not None:
+        run_once(p=p, template=p.template, out_root=out_root)
+        raise SystemExit(0)
     # --- make sure dataset exists at the expected path before split generation ---
     if getattr(p, "dataset", None):
         ds = p.dataset
@@ -842,13 +906,14 @@ if __name__ == "__main__":
         if getattr(p, "dataset", None):
             vf = (p.val_fracs[0] if isinstance(p.val_fracs, (tuple, list)) else float(p.val_fracs))
             data_path, _ = build_split_for(vf, p.dataset, out_dir=WRITABLE_BASE)
-        target_epochs = _target_epochs_from_reference(p, reference_data_path)
-        p = equalize_for_split(
-            p,
-            data_path=data_path,
-            mode="iterations",
-            target_epochs=target_epochs,
-        )
+        if not p.custom_data:
+            target_epochs = _target_epochs_from_reference(p, reference_data_path)
+            p = equalize_for_split(
+                p,
+                data_path=data_path,
+                mode="iterations",
+                target_epochs=target_epochs,
+            )
         run_once(p=p, template=p.template or (p.templates[0] if p.templates else None), out_root=out_root,
             # flat_output=overrides_used,
         )

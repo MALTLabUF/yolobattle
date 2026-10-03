@@ -129,24 +129,37 @@ class DarknetBackend:
     name = "darknet"
 
     def prepare(self, profile, *, template, output_dir, gpu_indices, gpus_str):
-        if not template:
-            raise ValueError("Darknet requires a template")
-        generate_cfg_file(template=template, data_path=profile.data_path, out_path=profile.cfg_out,
-                          width=profile.width, height=profile.height, batch_size=profile.batch_size,
-                          subdivisions=profile.subdivisions, iterations=profile.iterations,
-                          learning_rate=profile.learning_rate, anchor_clusters=None,
-                          color_preset=profile.color_preset,
-                          random_multiscale=1 if template == "yolov7" else None)
-        shutil.copy2(profile.cfg_out, output_dir / Path(profile.cfg_out).name)
-        _copy_lists(profile.data_path, output_dir)
+        if profile.darknet_project is not None:
+            from .adhoc import prepare_adhoc
+            profile = prepare_adhoc(profile, output_dir)
+        elif profile.custom_data:
+            profile = stage_custom_data(profile, output_dir)
+        if not profile.cfg_source:
+            if not template:
+                raise ValueError("Darknet requires a template")
+            generate_cfg_file(template=template, data_path=profile.data_path, out_path=profile.cfg_out,
+                              width=profile.width, height=profile.height, batch_size=profile.batch_size,
+                              subdivisions=profile.subdivisions, iterations=profile.iterations,
+                              learning_rate=profile.learning_rate, anchor_clusters=None,
+                              color_preset=profile.color_preset,
+                              random_multiscale=1 if template == "yolov7" else None)
+        cfg_copy = output_dir / Path(profile.cfg_out).name
+        if Path(profile.cfg_out).resolve() != cfg_copy.resolve():
+            shutil.copy2(profile.cfg_out, cfg_copy)
+        if not profile.darknet_project:
+            _copy_lists(profile.data_path, output_dir)
         extras = []
         if profile.map_thresh is not None: extras += ["-thresh", f"{profile.map_thresh:.2f}"]
         if profile.iou_thresh is not None: extras += ["-iou_thresh", f"{profile.iou_thresh:.2f}"]
         extras += ["-points", str(profile.map_points or 101)]
         darknet = _darknet_binary()
-        command = (f"{darknet} detector -map {' '.join(extras)} -dont_show -nocolor "
-                   + (f"-gpus {gpus_str} " if gpus_str else "")
-                   + f"train {profile.data_path} {profile.cfg_out} 2>&1 | tee training_output.log")
+        command_args = [darknet, "detector", "-map", *extras, "-dont_show", "-nocolor"]
+        if gpus_str:
+            command_args.extend(("-gpus", gpus_str))
+        command_args.extend(("train", profile.data_path, profile.cfg_out))
+        if profile.darknet_project and profile.darknet_project.weights:
+            command_args.append(str(profile.darknet_project.weights))
+        command = shlex.join(command_args) + " 2>&1 | tee training_output.log"
         return replace(profile, map_points=profile.map_points or 101), command
 
     def native_metrics(self, profile, output_dir):
@@ -162,20 +175,9 @@ class DarknetBackend:
 
     def export_coco(self, profile, *, output_dir, gt_json, det_json, valid_list, threshold, gpu_indices):
         selector = _checkpoint_selector(profile)
-        cfg = Path(profile.cfg_out)
-        split_dir = Path(os.environ.get("WRITABLE_BASE", "/workspace/.cache/splits"))
-        final_candidates = [
-            split_dir / f"{cfg.stem}_final.weights", split_dir / "final.weights",
-            cfg.with_name(f"{cfg.stem}_final.weights"), cfg.with_name("final.weights"),
-        ]
-        fallback_candidates = [
-            split_dir / f"{cfg.stem}_last.weights", split_dir / "last.weights",
-            cfg.with_name(f"{cfg.stem}_last.weights"), cfg.with_name("last.weights"),
-        ]
-        best_candidates = [
-            cfg.with_name(f"{cfg.stem}_best.weights"), cfg.with_name("best.weights"),
-            split_dir / f"{cfg.stem}_best.weights", split_dir / "best.weights",
-        ]
+        final_candidates = _darknet_checkpoints(profile, "final")
+        fallback_candidates = _darknet_checkpoints(profile, "last")
+        best_candidates = _darknet_checkpoints(profile, "best")
         candidates = final_candidates + fallback_candidates
         if selector == "backend_default":
             candidates = best_candidates + candidates
@@ -185,18 +187,19 @@ class DarknetBackend:
         darknet = _darknet_binary()
         export_darknet_detections(darknet_bin=darknet, data_path=profile.data_path,
             cfg_path=profile.cfg_out, weights_path=str(weights), ann_json=gt_json, out_json=det_json,
-            images_txt=valid_list, thresh=threshold, letter_box=False, save_vis=True, vis_dir=str(output_dir))
+            images_txt=valid_list, thresh=threshold,
+            letter_box=profile.darknet_project.letter_box if profile.darknet_project else False,
+            save_vis=True, vis_dir=str(output_dir))
 
-    def model_label(self, profile, template): return template or "darknet"
+    def model_label(self, profile, template):
+        return template or (Path(profile.cfg_source).stem if profile.cfg_source else "darknet")
     def finalize(self, profile, output_dir):
-        cfg = Path(profile.cfg_out)
-        split_dir = Path(os.environ.get("WRITABLE_BASE", "/workspace/.cache/splits"))
-        for source in (
-            split_dir / f"{cfg.stem}_last.weights", split_dir / "last.weights",
-            cfg.with_name(f"{cfg.stem}_last.weights"), cfg.with_name("last.weights"),
-        ):
+        for source in _darknet_checkpoints(profile, "last"):
             if source.is_file():
-                shutil.copy2(source, output_dir / source.name)
+                target = output_dir / source.name
+                if source.resolve() != target.resolve():
+                    shutil.copy2(source, target)
+                break
 
 
 class UltralyticsBackend:
