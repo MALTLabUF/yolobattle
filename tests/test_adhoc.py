@@ -296,19 +296,6 @@ class AdhocTest(unittest.TestCase):
             self.assertIn("train.txt", archive.namelist())
             self.assertFalse(any(name.startswith("darknet_inputs/") for name in archive.namelist()))
 
-    def test_custom_cfg_uses_the_same_validation_and_snapshot_as_adhoc(self):
-        from yolobattle.model_training.custom_profile import custom_darknet_profile
-        kwargs = dict(name="MyExperiment", data_path=str(self.root / "hand.data"),
-                      cfg_path=str(self.root / "hand.cfg"), template=None, width=None, height=None,
-                      batch_size=None, subdivisions=None, iterations=None, learning_rate=None)
-        profile = custom_darknet_profile(**kwargs)
-        self.assertEqual(profile.name, "MyExperiment")
-        self.assertEqual(profile.darknet_project, self.load().darknet_project)
-        self.assertTrue(profile.darknet_project.letter_box)
-        (self.root / "hand.cfg").write_text(CFG.replace("classes=1", "classes=2"))
-        with self.assertRaisesRegex(ValueError, "Class counts"):
-            custom_darknet_profile(**kwargs)
-
     def run_cli(self, *args):
         # Execute the actual CLI block with the GPU run boundary replaced. This
         # tests argument handling and routing without importing GPU drivers.
@@ -318,10 +305,8 @@ class AdhocTest(unittest.TestCase):
         main = tree.body[-1]
         self.assertIsInstance(main, ast.If)
         run = Mock()
-        from yolobattle.model_training.custom_profile import custom_darknet_profile
         namespace = dict(__name__="__main__", argparse=argparse, os=os, Path=Path,
                          replace=replace, run_once=run, get_profile=Mock(),
-                         custom_darknet_profile=custom_darknet_profile,
                          ensure_download_once=Mock(), build_split_for=Mock(), equalize_for_split=Mock())
         with patch("sys.argv", ["train", *args]), patch.dict(os.environ, {"YOLOBATTLE_CONTAINER": "1"}), \
                 patch("os.makedirs"), patch("sys.stdout"), patch("sys.stderr"):
@@ -341,26 +326,13 @@ class AdhocTest(unittest.TestCase):
             namespace[helper].assert_not_called()
 
     def test_cli_rejects_ambiguous_sources_and_cfg_overrides(self):
-        for extra in (("--profile", "LegoGearsDarknetBenchmark"), ("--custom-profile", "custom"),
+        for extra in (("--profile", "LegoGearsDarknetBenchmark"),
+                      ("--custom-profile", "custom"),
                       ("--iterations", "100"), ("--val-frac", ".2")):
             with self.subTest(extra=extra):
                 code, namespace = self.run_cli("--adhoc", str(self.root), *extra)
                 self.assertEqual(code, 2)
                 namespace["run_once"].assert_not_called()
-
-    def test_custom_cfg_cli_also_bypasses_split_generation(self):
-        weights = self.root / "initial.weights"
-        weights.touch()
-        code, namespace = self.run_cli("--custom-profile", "MyExperiment",
-                                       "--cfg-path", str(self.root / "hand.cfg"),
-                                       "--data-path", str(self.root / "hand.data"),
-                                       "--weights", "/old/initial.weights", "--path-map", f"/old={self.root}")
-        self.assertEqual(code, 0)
-        namespace["run_once"].assert_called_once()
-        self.assertEqual(namespace["run_once"].call_args.kwargs["p"].name, "MyExperiment")
-        self.assertEqual(namespace["run_once"].call_args.kwargs["p"].darknet_project.weights, weights.resolve())
-        for helper in ("get_profile", "ensure_download_once", "build_split_for", "equalize_for_split"):
-            namespace[helper].assert_not_called()
 
     def test_apptainer_wrapper_binds_folder_and_passes_training_options(self):
         import yolobattle

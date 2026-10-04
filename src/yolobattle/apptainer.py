@@ -246,24 +246,23 @@ def _build_image(args: argparse.Namespace) -> Path:
 
 def _run_image(args: argparse.Namespace) -> None:
     client = _client()
-    custom_name = getattr(args, "custom_profile", None)
     adhoc = getattr(args, "adhoc", None)
-    if (custom_name or adhoc) and args.backend not in (None, "darknet"):
-        raise SystemExit("Custom profiles currently support the Darknet backend.")
+    if adhoc and args.backend not in (None, "darknet"):
+        raise SystemExit("Ad hoc projects currently support the Darknet backend.")
     if adhoc:
         adhoc = str(Path(adhoc).expanduser().resolve())
         if not Path(adhoc).is_dir():
             raise SystemExit(f"Ad hoc dataset folder not found: {adhoc}")
-    backend = _resolve_backend(profile=args.profile, backend="darknet" if (custom_name or adhoc) else args.backend)
+    backend = _resolve_backend(profile=args.profile, backend="darknet" if adhoc else args.backend)
     root = _repo_root()
 
     image_path = Path(args.image).resolve() if args.image else _default_image(root, backend)
     if args.offline and backend != "darknet":
         raise SystemExit("Offline bundle mode is currently available for the Darknet Lego Gears image only.")
-    if args.offline and args.profile not in {"LegoGearsDarknetBenchmark", "LegoGearsDarknet"}:
+    if args.offline and not adhoc and args.profile not in {"LegoGearsDarknetBenchmark", "LegoGearsDarknet"}:
         raise SystemExit(
             "This offline SIF contains the Lego Gears dataset and Darknet tiny cfg templates; "
-            "use profile LegoGearsDarknetBenchmark or LegoGearsDarknet."
+            "use profile LegoGearsDarknetBenchmark, LegoGearsDarknet, or --adhoc with local data."
         )
     if args.offline and args.build:
         raise SystemExit("--offline uses the prebuilt offline SIF; it cannot build an image at run time.")
@@ -311,7 +310,7 @@ def _run_image(args: argparse.Namespace) -> None:
     client.setenv("WRITABLE_BASE", "/workspace/.cache/splits")
     client.setenv("DARKNET_PARENT", "/host_workspace")
 
-    profile_args = ["--custom-profile", custom_name] if custom_name else ["--profile", args.profile]
+    profile_args = ["--profile", args.profile]
     if adhoc:
         # Preserve absolute host paths in existing .data files and image lists.
         binds.append(f"{adhoc}:{adhoc}:ro")
@@ -488,7 +487,6 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument("--backend", default=None, help="Override backend (darknet|ultralytics).")
     profile_choice = run.add_mutually_exclusive_group()
     profile_choice.add_argument("--profile", default="LegoGearsDarknetBenchmark", help="Training profile name.")
-    profile_choice.add_argument("--custom-profile", metavar="NAME", help="Custom Darknet profile; pass its data/cfg settings after --.")
     profile_choice.add_argument("--adhoc", metavar="FOLDER", help="Bind and run an existing Darknet project folder; optional settings follow --.")
     run.add_argument("--image", default=None, help="Path to .sif image.")
     run.add_argument("--outputs", default=None, help="Host outputs directory.")

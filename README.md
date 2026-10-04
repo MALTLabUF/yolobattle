@@ -67,11 +67,6 @@ evaluation retains the original image paths. That input view is excluded from
 the benchmark ZIP. `adhoc.json` records the cfg hash and the path-prefix
 relocations used, including whether each was automatic or explicit.
 
-`--custom-profile NAME --data-path FILE --cfg-path FILE` uses this same loader
-and preparation, with the data file's parent as the project root. It also
-accepts `--weights` and `--path-map`. Custom profiles that generate a cfg from
-a template retain their separate template-generation path.
-
 For the Singularity command, after updating the SIF's training code:
 
 ```bash
@@ -114,7 +109,7 @@ An optional explicit mapping overrides automatic resolution, for example
 `--path-map /old/location/handWM6=/datasets/handWM6`.
 Mappings also support Windows prefixes such as `--path-map 'C:/old/handWM6=/datasets/handWM6'`
 and may be repeated. With `yolobattle apptainer run`, put these training options
-after `--`. Use `--profile`, `--custom-profile`, or `--adhoc` one at a time.
+after `--`. Use `--profile` or `--adhoc`.
 
 #### Moving a dataset between machines and containers
 
@@ -282,9 +277,10 @@ dataset and generated split files stay there; training outputs go to
 `artifacts/outputs`.
 
 The offline SIF uses only its bundled assets and errors if one is missing. The
-wrapper does not auto-build a missing offline image. The bundle supports
-`LegoGearsDarknetBenchmark` and `LegoGearsDarknet`; the regular SIF keeps the
-existing online behavior for other profiles.
+wrapper does not auto-build a missing offline image. The bundled dataset supports
+`LegoGearsDarknetBenchmark` and `LegoGearsDarknet`. With updated training code,
+`--adhoc` can also use this image with your own mounted cfg and dataset, as
+described above. The regular SIF keeps the existing online behavior for other profiles.
 
 ## Slurm Batch (cloudmesh-ee API)
 

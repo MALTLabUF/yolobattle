@@ -21,7 +21,6 @@ from yolobattle.model_training.dataset_setup import make_split, IMG_EXTS
 
 from yolobattle.model_training.datasets import ensure_download_once
 from yolobattle.model_training.backends import get_backend
-from yolobattle.model_training.custom_profile import custom_darknet_profile
 
 WRITABLE_BASE = Path(os.environ.get("WRITABLE_BASE", "/workspace/.cache/splits"))
 
@@ -651,18 +650,13 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Train with a named profile or an existing Darknet project.")
     profile_choice = ap.add_mutually_exclusive_group()
     profile_choice.add_argument("--profile", default="LegoGearsDarknetBenchmark", help="Profile name in profiles.PROFILES")
-    profile_choice.add_argument("--custom-profile", metavar="NAME", help="Create a Darknet profile from an existing .data split and CLI settings")
     profile_choice.add_argument("--adhoc", metavar="FOLDER", help="Discover an existing Darknet cfg and data file in a folder")
     ap.add_argument("--weights", help="Initial weights for a supplied cfg, relative to the project folder or absolute; default: train from scratch")
     ap.add_argument("--path-map", action="append", default=[], metavar="OLD=NEW",
                     help="Override automatic relocation for a supplied cfg's data and image lists; repeatable")
-    custom = ap.add_argument_group("custom Darknet profile")
-    custom.add_argument("--data-path", help="Existing Darknet .data file for --custom-profile or --adhoc")
-    custom.add_argument("--cfg-path", help="Use an existing .cfg unchanged; training settings are read from its [net] section")
-    custom.add_argument("--width", type=int, help="Input width for a custom template-generated cfg")
-    custom.add_argument("--height", type=int, help="Input height for a custom template-generated cfg")
-    custom.add_argument("--batch-size", type=int, help="Batch size for a custom template-generated cfg")
-    custom.add_argument("--subdivisions", type=int, help="Subdivisions for a custom template-generated cfg")
+    adhoc_group = ap.add_argument_group("ad hoc Darknet project")
+    adhoc_group.add_argument("--data-path", help="Select a .data file when the folder contains multiple files")
+    adhoc_group.add_argument("--cfg-path", help="Select a .cfg file when the folder contains multiple files")
 
     #cloudmesh ee
     ap.add_argument("--template", default=None, help="Darknet template override (e.g., yolov7-tiny)")
@@ -692,11 +686,11 @@ if __name__ == "__main__":
 
     args = ap.parse_args()
 
-    custom_fields = (args.data_path, args.cfg_path, args.width, args.height, args.batch_size, args.subdivisions)
     if args.adhoc:
-        for option in ("template", "val_frac", "iterations", "learning_rate", "color_preset",
-                       "ultra_model", "dataset_root", "training_seed", "early_stopping_patience",
-                       "width", "height", "batch_size", "subdivisions"):
+        for option in (
+            "template", "val_frac", "iterations", "learning_rate", "color_preset",
+            "ultra_model", "dataset_root", "training_seed", "early_stopping_patience",
+        ):
             if getattr(args, option) is not None:
                 ap.error(f"--{option.replace('_', '-')} cannot be combined with --adhoc; edit the source cfg/data instead")
         from yolobattle.model_training.adhoc import load_adhoc_profile
@@ -707,29 +701,12 @@ if __name__ == "__main__":
             ap.error(str(exc))
         print(f"[adhoc] {base_profile.name}: {base_profile.width}x{base_profile.height}, "
               f"{base_profile.iterations} iterations, existing train/validation lists")
-    elif args.custom_profile:
-        if args.dataset_root is not None or args.val_frac is not None:
-            ap.error("Custom profiles preserve the split in --data-path; omit --dataset-root and --val-frac")
-        if args.ultra_model is not None:
-            ap.error("Custom profiles currently support the Darknet backend")
-        if args.cfg_path and args.color_preset is not None:
-            ap.error("--cfg-path preserves cfg settings; omit --color-preset")
-        try:
-            base_profile = custom_darknet_profile(
-                name=args.custom_profile, data_path=args.data_path, cfg_path=args.cfg_path,
-                template=args.template, width=args.width, height=args.height,
-                batch_size=args.batch_size, subdivisions=args.subdivisions,
-                iterations=args.iterations, learning_rate=args.learning_rate,
-                weights=args.weights, path_maps=args.path_map,
-            )
-        except (ValueError, OSError) as exc:
-            ap.error(str(exc))
     else:
-        if any(value is not None for value in custom_fields):
-            ap.error("--data-path, --cfg-path, --width, --height, --batch-size and --subdivisions require --custom-profile")
+        if args.data_path or args.cfg_path:
+            ap.error("--data-path and --cfg-path require --adhoc")
         base_profile = get_profile(args.profile)
-    if not (args.adhoc or (args.custom_profile and args.cfg_path)) and (args.weights or args.path_map):
-        ap.error("--weights and --path-map require --adhoc or --custom-profile with --cfg-path")
+    if not args.adhoc and (args.weights or args.path_map):
+        ap.error("--weights and --path-map require --adhoc")
     p = base_profile
 
     #cloudmesh ee
@@ -823,7 +800,7 @@ if __name__ == "__main__":
         or any(name in os.environ for name in ("APPTAINER_ENVIRONMENT", "SINGULARITY_ENVIRONMENT"))
     )
 
-    if overrides_used and not (args.custom_profile or args.adhoc):
+    if overrides_used and not args.adhoc:
         # If any CLI override is used, keep artifacts in the directory
         # where this script was invoked (no nested /outputs/.../benchmark__...).
         out_root = original_cwd
@@ -839,6 +816,7 @@ if __name__ == "__main__":
     if p.darknet_project is not None:
         run_once(p=p, template=p.template, out_root=out_root)
         raise SystemExit(0)
+
     # --- make sure dataset exists at the expected path before split generation ---
     if getattr(p, "dataset", None):
         ds = p.dataset

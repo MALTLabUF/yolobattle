@@ -76,14 +76,25 @@ def _split_counts(data_path: str) -> tuple[int, int]:
         counts = __import__("json").loads(path.with_name(path.stem + "_split.json").read_text())["counts"]
         return int(counts.get("train_total", 0)), int(counts.get("valid_total", 0))
     except Exception:
-        return 0, 0
+        values = _data_values(data_path)
+        counts = []
+        for key in ("train", "valid"):
+            source = values.get(key)
+            listing = Path(source) if source else None
+            if listing is not None and not listing.is_absolute():
+                listing = Path(data_path).parent / listing
+            counts.append(sum(1 for line in listing.read_text().splitlines()
+                              if line.strip() and not line.lstrip().startswith("#"))
+                          if listing is not None and listing.is_file() else 0)
+        return tuple(counts)
 
 
 def _copy_lists(data_path: str, output_dir: Path) -> None:
     for key, destination in (("train", "train.txt"), ("valid", "valid.txt")):
         source = _data_values(data_path).get(key)
-        if source and Path(source).is_file():
-            shutil.copy2(source, output_dir / destination)
+        target = output_dir / destination
+        if source and Path(source).is_file() and Path(source).resolve() != target.resolve():
+            shutil.copy2(source, target)
 
 
 def _darknet_checkpoints(profile, kind: str) -> list[Path]:
@@ -145,8 +156,6 @@ class DarknetBackend:
         if profile.darknet_project is not None:
             from .adhoc import prepare_adhoc
             profile = prepare_adhoc(profile, output_dir)
-        elif profile.custom_data:
-            profile = stage_custom_data(profile, output_dir)
         if not profile.cfg_source:
             if not template:
                 raise ValueError("Darknet requires a template")
