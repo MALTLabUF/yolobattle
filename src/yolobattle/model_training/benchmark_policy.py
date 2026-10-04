@@ -1,4 +1,4 @@
-"""Immutable rules that make results comparable across training frameworks."""
+"""Shared policy type; concrete policies live in benchmarks/<dataset>.py."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
@@ -43,59 +43,29 @@ class BenchmarkPolicy:
         return replace(dataset, split_seed=self.split_seed)
 
 
-LEGO_GEARS_224X160_V1 = BenchmarkPolicy(
-    name="legogears_224x160_v1",
-    width=224,
-    height=160,
-    split_seed=9001,
-    validation_fraction=0.20,
-    iterations=7000,
-    validation_fractions=(0.10, 0.15, 0.20, 0.80),
-)
+# Compatibility for previous imports; new settings live in benchmarks/<dataset>.py.
+_LEGACY_EXPORTS = {
+    "LEGO_GEARS_224X160_V1": "lego_gears",
+    "LEATHER_256X256_V1": "leather",
+    "FISHEYE_TRAFFIC_960X736_V1": "fisheye_traffic",
+    "FISHEYE8K_OFFICIAL_1280X1280_V1": "fisheye8k",
+    "CUBES_224X160_V1": "cubes",
+    "CARDS_768X576_V1": "cards",
+    "ARABIC_HANDWRITING_352X256_V1": "arabic_handwriting",
+}
 
-LEATHER_256X256_V1 = BenchmarkPolicy(
-    name="leather_256x256_v1",
-    width=256,
-    height=256,
-    split_seed=9001,
-    validation_fraction=0.20,
-    iterations=7000,
-)
+__all__ = ["BenchmarkPolicy"] + list(_LEGACY_EXPORTS)
 
-FISHEYE_TRAFFIC_960X736_V1 = BenchmarkPolicy(
-    name="fisheye_traffic_960x736_v1",
-    width=960,
-    height=736,
-    split_seed=9001,
-    validation_fraction=0.10,
-    iterations=8000,
-)
 
-FISHEYE8K_OFFICIAL_1280X1280_V1 = BenchmarkPolicy(
-    name="fisheye8k_official_1280x1280_v1",
-    width=1280,
-    height=1280,
-    split_seed=9001,
-    validation_fraction=0.30,
-    iterations=8000,
-    split_strategy="official",
-)
+def __getattr__(name: str):
+    # Lazy forwarding avoids a cycle: benchmark modules use the classes above.
+    if name in _LEGACY_EXPORTS:
+        from importlib import import_module
 
-CUBES_224X160_V1 = BenchmarkPolicy(
-    name="cubes_224x160_v1",
-    width=224,
-    height=160,
-    split_seed=9001,
-    validation_fraction=0.20,
-    iterations=7000,
-    validation_fractions=(0.10, 0.15, 0.20),
-)
+        module = import_module(f".benchmarks.{_LEGACY_EXPORTS[name]}", __package__)
+        return getattr(module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-CARDS_768X576_V1 = BenchmarkPolicy(
-    name="cards_768x576_v1",
-    width=768,
-    height=576,
-    split_seed=9001,
-    validation_fraction=0.20,
-    iterations=6000,
-)
+
+def __dir__():
+    return sorted(set(globals()) | set(_LEGACY_EXPORTS))

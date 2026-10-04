@@ -37,6 +37,56 @@ make slurm
 - `yolobattle -m train --profile <PROFILE>`
 - `yolobattle train --profile <PROFILE>`
 
+### Where to configure a benchmark
+
+Each dataset has one configuration module under
+[`src/yolobattle/model_training/benchmarks`](src/yolobattle/model_training/benchmarks).
+Its dataset recipe, comparison policy, and training profiles live together:
+
+| Dataset | Configuration file |
+| --- | --- |
+| Arabic handwriting | [arabic_handwriting.py](src/yolobattle/model_training/benchmarks/arabic_handwriting.py) |
+| Leather | [leather.py](src/yolobattle/model_training/benchmarks/leather.py) |
+| Lego Gears | [lego_gears.py](src/yolobattle/model_training/benchmarks/lego_gears.py) |
+| Cubes | [cubes.py](src/yolobattle/model_training/benchmarks/cubes.py) |
+| Playing cards | [cards.py](src/yolobattle/model_training/benchmarks/cards.py) |
+| Local fisheye traffic | [fisheye_traffic.py](src/yolobattle/model_training/benchmarks/fisheye_traffic.py) |
+| FishEye8K | [fisheye8k.py](src/yolobattle/model_training/benchmarks/fisheye8k.py) |
+
+Within that file:
+
+- `DatasetRecipe` defines the download URL, checksum, classes, and image/label layout.
+- `BenchmarkPolicy` defines dimensions, split seed/fraction, training iterations,
+  and shared evaluation rules.
+- `BENCHMARK_PROFILES` defines the backend, model choices, and training parameters.
+  `LEGACY_SWEEP_PROFILES` contains existing experimental variants of those profiles.
+
+For example, Arabic handwriting's `templates=("yolov4",)` selects Darknet YOLOv4.
+With `"templates"` in `sweep_keys`, changing it to `("yolov4", "yolov7")` runs both.
+Ultralytics profiles select models using `ultra_model`, or
+`sweep_values["ultra_model"]` when `"ultra_model"` is in `sweep_keys`.
+The PyTorch YOLOv4 profile uses `pytorch_cfg`.
+
+For archives with nested directories, set `DatasetRecipe.archive_subdir` to
+the dataset's relative path inside the ZIP. Arabic handwriting uses
+`"mnt/lustre/users/nalaas/nn/handWM6"`. `root` remains the extraction directory;
+`names`, `flat_dir`, and supplied split directories are relative to
+`root / archive_subdir` (`DatasetSpec.content_root`). Explicit layouts are
+preserved without moving files. The loader reuses a completed extraction when
+that directory is ready, including downloads made before this setting existed.
+The URL and archive checksum remain unchanged. With no `archive_subdir`, existing
+dataset normalization continues to apply.
+
+To add a dataset, create a module following this structure, then import it and
+add it to `BENCHMARK_MODULES` in
+[`profile_registry.py`](src/yolobattle/model_training/profile_registry.py).
+Provide both profile dictionaries (use `{}` for unused categories). Registry
+keys must match each profile's `name`; duplicate names are rejected.
+Reusable classes and helpers stay in `benchmark_definitions.py`,
+`benchmark_policy.py`, and `profile_models.py`. These files need no changes
+when adding a dataset. Existing imports of moved constants remain supported
+for compatibility; new code should import settings from the dataset module.
+
 ### Ad hoc Darknet dataset folders
 
 Use an existing Darknet project without adding a named profile:

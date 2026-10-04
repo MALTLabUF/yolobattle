@@ -51,14 +51,13 @@ def _has_predefined_split(root: Path, spec) -> bool:
 
 def _looks_ready(root: Path, spec) -> bool:
     try:
-        if _has_predefined_split(root, spec):
-            return True
+        if spec.predefined_train_dir or spec.predefined_valid_dir:
+            return _has_predefined_split(root, spec)
         # if a flat cache is specified, that's enough
         if getattr(spec, "flat_dir", None):
-            if (root / spec.flat_dir).is_dir():
-                return True
+            return (root / spec.flat_dir).is_dir()
         expected = set(spec.sets) | set(getattr(spec, "neg_subdirs", []) or [])
-        return all((root / d).is_dir() for d in expected)
+        return bool(expected) and all((root / d).is_dir() for d in expected)
     except Exception:
         return False
 
@@ -157,13 +156,16 @@ def ensure_download_once(spec: DatasetSpec, *, force: bool = False) -> Path:
     """
     One-time download/extract into spec.root (absolute or relative to CWD).
     Skips if marker exists, unless force=True.
-    Returns the dataset root Path.
+    Returns the content root (spec.root / archive_subdir when configured).
+    Explicit archive layouts are preserved, with the marker at spec.root.
     """
     root = Path(spec.root).resolve()
+    content_root = spec.content_root
     offline = os.environ.get("YOLOBATTLE_OFFLINE") == "1"
 
     # -------- Local-only mode: fail fast, no writes, no marker --------
     if getattr(spec, "require_existing", False):
+        root = content_root
         if not root.exists():
             raise FileNotFoundError(f"[local-only] dataset root not found: {root}")
         # Ok if either sets/flat_dir exist OR a .data file already exists
@@ -192,9 +194,18 @@ def ensure_download_once(spec: DatasetSpec, *, force: bool = False) -> Path:
     root.parent.mkdir(parents=True, exist_ok=True)
     root.mkdir(parents=True, exist_ok=True)
 
-    if not force and already_prepared(root) and _looks_ready(root, spec):
-        _eprint(f"[skip] dataset ready at {root}")
-        return root
+    if not force and already_prepared(root) and _looks_ready(content_root, spec):
+        _eprint(f"[skip] dataset ready at {content_root}")
+        return content_root
+
+    # A wrong explicit path is a configuration error. Preserve the cached
+    # extraction so correcting archive_subdir does not require a new download.
+    if not force and spec.archive_subdir is not None and already_prepared(root):
+        raise FileNotFoundError(
+            f"Dataset content missing at {content_root}; check archive_subdir="
+            f"{spec.archive_subdir!r} and flat_dir={spec.flat_dir!r}. "
+            "Existing extraction has been preserved."
+        )
 
     # marker exists but expected dirs missing → repair
     if already_prepared(root) and not _looks_ready(root, spec):
@@ -215,8 +226,10 @@ def ensure_download_once(spec: DatasetSpec, *, force: bool = False) -> Path:
                 )
             _eprint(f"[info] no URL provided; assuming files already present at {root}")
             root.mkdir(parents=True, exist_ok=True)
+            if spec.archive_subdir is not None and not _looks_ready(content_root, spec):
+                raise FileNotFoundError(f"Dataset content missing at {content_root}")
             _mark_complete(root, meta)
-            return root
+            return content_root
 
         tmpdir: Path | None = None
         if offline:
@@ -249,6 +262,18 @@ def ensure_download_once(spec: DatasetSpec, *, force: bool = False) -> Path:
                 meta["sha256"] = got
 
             _extract(archive, root)
+
+            if spec.archive_subdir is not None:
+                # Keep every archive entry at its original relative path.
+                if not _looks_ready(content_root, spec):
+                    raise FileNotFoundError(
+                        f"Extracted dataset content missing at {content_root}; "
+                        f"check archive_subdir={spec.archive_subdir!r} "
+                        f"and flat_dir={spec.flat_dir!r}"
+                    )
+                _mark_complete(root, meta)
+                _eprint(f"[ok] dataset ready at {content_root}")
+                return content_root
 
             # flatten trivial single-dir case
             children = [c for c in root.iterdir() if c.name != MARKER_NAME]
@@ -284,7 +309,7 @@ def ensure_download_once(spec: DatasetSpec, *, force: bool = False) -> Path:
         return root
 
 def ensure_splits(spec: DatasetSpec) -> None:
-    root = Path(spec.root).resolve()
+    root = spec.content_root
     train = root / f"{spec.prefix}_train.txt"
     valid = root / f"{spec.prefix}_valid.txt"
     data  = root / f"{spec.prefix}.data"

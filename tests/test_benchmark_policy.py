@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from yolobattle.model_training.benchmark_policy import (
+    ARABIC_HANDWRITING_352X256_V1,
     CARDS_768X576_V1,
     CUBES_224X160_V1,
     FISHEYE8K_OFFICIAL_1280X1280_V1,
@@ -13,6 +14,7 @@ from yolobattle.model_training.benchmark_policy import (
     LEGO_GEARS_224X160_V1,
 )
 from yolobattle.model_training.benchmark_definitions import (
+    ARABIC_HANDWRITING_V1,
     CARDS_V1,
     CUBES_V1,
     FISHEYE8K_OFFICIAL_V1,
@@ -147,6 +149,16 @@ class LegoGearsPolicyTest(unittest.TestCase):
                 self.assertEqual(profile.dataset.split_seed, policy.split_seed)
                 self.assertEqual(profile.policy.fingerprint(), policy.fingerprint())
 
+    def test_arabic_handwriting_profile_matches_downloaded_metadata(self):
+        profile = get_profile("ArabicHandwriting")
+        self.assertIs(profile.policy, ARABIC_HANDWRITING_352X256_V1)
+        self.assertEqual((profile.width, profile.height), (352, 256))
+        self.assertEqual(profile.iterations, 4000)
+        self.assertEqual(profile.dataset.classes, 5)
+        self.assertEqual(profile.dataset.class_names, ("Alif", "Ta", "Ra", "Sin", "Hea"))
+        self.assertEqual(profile.dataset.flat_dir, "darkmark_image_cache/resize")
+        self.assertEqual(profile.dataset.sha256, "4f07ca513d1afd12c0a319e8909a8c6095ab6849b861dcd7c92c298288736e3b")
+
     def test_canonical_profiles_resolve_dataset_from_one_benchmark_definition(self):
         cases = (
             (LEGO_GEARS_V1, ("LegoGearsDarknetBenchmark", "LegoGearsUltraBenchmark")),
@@ -155,6 +167,7 @@ class LegoGearsPolicyTest(unittest.TestCase):
             (FISHEYE8K_OFFICIAL_V1, ("FishEye8KDarknetBenchmark", "FishEye8KUltraBenchmark")),
             (CUBES_V1, ("CubesDarknetBenchmark", "CubesUltraBenchmark")),
             (CARDS_V1, ("CardsDarknet", "CardsUltra")),
+            (ARABIC_HANDWRITING_V1, ("ArabicHandwriting",)),
         )
         for definition, names in cases:
             for name in names:

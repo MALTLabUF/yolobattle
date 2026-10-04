@@ -90,7 +90,7 @@ def prepare(profile: TrainProfile, output_dir: Path) -> tuple[TrainProfile, Path
     ensure_download_once(dataset)
     val_frac = profile.policy.validation_fraction if profile.policy else float(profile.val_fracs[0])
     data_path, _ = make_split(
-        root=dataset.root, sets=None if dataset.flat_dir else list(dataset.sets),
+        root=str(dataset.content_root), sets=None if dataset.flat_dir else list(dataset.sets),
         classes=dataset.classes, names=dataset.names, prefix=f"{dataset.prefix}_v{int(round(val_frac * 100)):02d}",
         val_frac=val_frac, seed=dataset.split_seed, neg_subdirs=list(dataset.neg_subdirs) or None,
         exts=list(dataset.exts or IMG_EXTS), flat_dir=dataset.flat_dir, legos=dataset.legos,
@@ -134,7 +134,7 @@ def prepare(profile: TrainProfile, output_dir: Path) -> tuple[TrainProfile, Path
 
 
 def build_command(profile: TrainProfile, model_cfg: Path, train_labels: Path, valid_labels: Path, output_dir: Path) -> list[str]:
-    dataset_root = profile.dataset.root if profile.dataset else ""
+    dataset_root = profile.dataset.content_root if profile.dataset else ""
     train_script = Path(os.environ["PYTORCH_YOLOV4_ROOT"]) / "train.py"
     burn_in, steps, scales = darknet_style_schedule(profile.iterations)
     training_seed = profile.training_seed if profile.training_seed is not None else profile.dataset.split_seed

@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING
 if TYPE_CHECKING:
     from .adhoc import DarknetProject
 
-from yolobattle.model_training.benchmark_definitions import BenchmarkDefinition, DatasetSpec, LEGO_GEARS_V1
+from yolobattle.model_training.benchmark_definitions import BenchmarkDefinition, DatasetSpec
 from yolobattle.model_training.benchmark_policy import BenchmarkPolicy
 
 
@@ -80,8 +80,13 @@ def benchmark_profile(
 
 def lego_gears_profile(
     *, root: str, val_fracs: Tuple[float, ...] | None = None,
-    definition: BenchmarkDefinition = LEGO_GEARS_V1, **kwargs: Any,
+    definition: BenchmarkDefinition | None = None, **kwargs: Any,
 ) -> TrainProfile:
+    """Compatibility helper; new profiles use benchmark_profile directly."""
+    if definition is None:
+        from .benchmarks.lego_gears import LEGO_GEARS_V1
+
+        definition = LEGO_GEARS_V1
     return benchmark_profile(definition=definition, root=root, val_fracs=val_fracs, **kwargs)
 
 

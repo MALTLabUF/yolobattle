@@ -1,20 +1,13 @@
-"""Canonical dataset identities paired with framework-neutral benchmark policy."""
+"""Dataset/benchmark types; concrete settings live in benchmarks/<dataset>.py."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from hashlib import sha256
 import json
+from pathlib import Path
 from typing import Tuple
 
-from yolobattle.model_training.benchmark_policy import (
-    BenchmarkPolicy,
-    CARDS_768X576_V1,
-    CUBES_224X160_V1,
-    FISHEYE8K_OFFICIAL_1280X1280_V1,
-    FISHEYE_TRAFFIC_960X736_V1,
-    LEATHER_256X256_V1,
-    LEGO_GEARS_224X160_V1,
-)
+from yolobattle.model_training.benchmark_policy import BenchmarkPolicy
 
 
 @dataclass(frozen=True)
@@ -42,6 +35,23 @@ class DatasetSpec:
     # actual format so unrelated metadata cannot change the evaluation path.
     annotation_format: str = "auto"
 
+    # Path inside the unmodified archive; root remains the extraction directory.
+    archive_subdir: str | None = None
+
+    @property
+    def content_root(self) -> Path:
+        """Directory containing names, images, and labels after extraction."""
+        root = Path(self.root).resolve()
+        if self.archive_subdir is None:
+            return root
+        subdir = Path(self.archive_subdir)
+        if subdir.is_absolute() or ".." in subdir.parts:
+            raise ValueError("archive_subdir must be a relative path within the dataset root")
+        content = (root / subdir).resolve()
+        if not content.is_relative_to(root):
+            raise ValueError("archive_subdir resolves outside the dataset root")
+        return content
+
 
 @dataclass(frozen=True)
 class DatasetRecipe:
@@ -62,6 +72,7 @@ class DatasetRecipe:
     predefined_valid_dir: str | None = None
     class_names: Tuple[str, ...] = tuple()
     annotation_format: str = "auto"
+    archive_subdir: str | None = None
 
     def at(self, root: str, *, split_seed: int = 9001) -> DatasetSpec:
         return DatasetSpec(root=root, split_seed=split_seed, **self.__dict__)
@@ -88,79 +99,29 @@ class BenchmarkDefinition:
         return sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
-LEGO_GEARS_V1 = BenchmarkDefinition(
-    name="legogears_v1",
-    policy=LEGO_GEARS_224X160_V1,
-    dataset_recipe=DatasetRecipe(
-        sets=("set_01", "set_02_empty", "set_03"),
-        classes=5,
-        names="LegoGears.names",
-        prefix="LegoGears",
-        neg_subdirs=("set_02_empty",),
-        exts=(".jpg",),
-        url="https://www.ccoderun.ca/programming/2024-05-01_LegoGears/legogears_2_dataset.zip",
-        sha256="126980d3e43986bbd3d785ac16f6430e9bf3b726e65a30574bb3c9ba06a4462e",
-    ),
-)
+# Compatibility for previous imports; new settings live in benchmarks/<dataset>.py.
+_LEGACY_EXPORTS = {
+    "LEGO_GEARS_V1": "lego_gears",
+    "LEATHER_V1": "leather",
+    "FISHEYE_TRAFFIC_LOCAL_V1": "fisheye_traffic",
+    "FISHEYE8K_OFFICIAL_V1": "fisheye8k",
+    "CUBES_V1": "cubes",
+    "CARDS_V1": "cards",
+    "ARABIC_HANDWRITING_V1": "arabic_handwriting",
+}
 
-LEATHER_V1 = BenchmarkDefinition(
-    name="leather_v1",
-    policy=LEATHER_256X256_V1,
-    dataset_recipe=DatasetRecipe(
-        sets=("color", "cut", "fold", "glue", "poke", "good_1", "good_2"),
-        classes=5,
-        names="leather.names",
-        prefix="leather",
-        neg_subdirs=("good_1", "good_2"),
-        exts=(".jpg", ".png"),
-        url="https://g-665dcc.55ba.08cc.data.globus.org/leather_oct_25.zip",
-        sha256="87fba3c49bce7342af51e1fe6df5a470862f201c0e8e25bf3ea80a0c6f238d8c",
-        flat_dir="darkmark_image_cache/resize",
-    ),
-)
+__all__ = ["DatasetSpec", "DatasetRecipe", "BenchmarkDefinition"] + list(_LEGACY_EXPORTS)
 
-FISHEYE_TRAFFIC_LOCAL_V1 = BenchmarkDefinition(
-    name="fisheye_traffic_local_v1",
-    policy=FISHEYE_TRAFFIC_960X736_V1,
-    dataset_recipe=DatasetRecipe(
-        sets=tuple(), classes=5, names="obj.names", prefix="combined",
-        exts=(".jpg", ".png"), require_existing=True,
-        flat_dir="darkmark_image_cache/resize",
-    ),
-)
 
-FISHEYE8K_OFFICIAL_V1 = BenchmarkDefinition(
-    name="fisheye8k_official_v1",
-    policy=FISHEYE8K_OFFICIAL_1280X1280_V1,
-    dataset_recipe=DatasetRecipe(
-        sets=tuple(), classes=5, names="FishEye8K.names", prefix="FishEye8K_official",
-        exts=(".jpg", ".jpeg", ".png"), require_existing=True,
-        predefined_train_dir="train/images", predefined_valid_dir="test/images",
-        class_names=("Bus", "Bike", "Car", "Pedestrian", "Truck"),
-        annotation_format="yolo",
-    ),
-)
+def __getattr__(name: str):
+    # Lazy forwarding avoids a cycle: benchmark modules use the classes above.
+    if name in _LEGACY_EXPORTS:
+        from importlib import import_module
 
-CUBES_V1 = BenchmarkDefinition(
-    name="cubes_v1",
-    policy=CUBES_224X160_V1,
-    dataset_recipe=DatasetRecipe(
-        sets=tuple(), classes=4, names="cubes.names", prefix="cubes",
-        exts=(".jpg", ".png"),
-        url="https://g-665dcc.55ba.08cc.data.globus.org/refinedcubes.zip",
-        sha256="8764c5086e1cada0b66de5198df11655009315873bc9245fd44741ff6e31f4e0",
-        flat_dir="darkmark_image_cache/resize",
-    ),
-)
+        module = import_module(f".benchmarks.{_LEGACY_EXPORTS[name]}", __package__)
+        return getattr(module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-CARDS_V1 = BenchmarkDefinition(
-    name="cards_v1",
-    policy=CARDS_768X576_V1,
-    dataset_recipe=DatasetRecipe(
-        sets=tuple(), classes=19, names="ccr_playing_cards.names", prefix="ccr_playing_cards",
-        exts=(".jpg", ".png"),
-        url="https://g-665dcc.55ba.08cc.data.globus.org/playing_cards.zip",
-        sha256="432d6da3a2fbec5d1dadd3278b5c4c21ccbaa2dbcd72e087daf193e9bdaf3cc4",
-        flat_dir="darkmark_image_cache/resize",
-    ),
-)
+
+def __dir__():
+    return sorted(set(globals()) | set(_LEGACY_EXPORTS))

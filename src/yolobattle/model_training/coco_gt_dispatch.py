@@ -18,7 +18,7 @@ def build_coco_gt_for_dataset(
     # Standard YOLO datasets may not ship a Darknet .names file.  In that
     # case dataset_setup creates one beside the writable split artifacts; use
     # the path recorded in the generated .data file when supplied.
-    names_path = names_path or (Path(dataset.root) / dataset.names)
+    names_path = names_path or (dataset.content_root / dataset.names)
     if not names_path.is_file():
         raise FileNotFoundError(f"names file not found: {names_path}")
 
@@ -38,7 +38,7 @@ def build_coco_gt_for_dataset(
             names_path=str(names_path),
         )
 
-    ann_root = Path(dataset.root) / (dataset.flat_dir or "")
+    ann_root = dataset.content_root / (dataset.flat_dir or "")
     build_coco_gt(
         ann_root=str(ann_root),
         out_json=str(out_json),
