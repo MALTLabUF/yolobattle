@@ -423,6 +423,8 @@ def _run_container(args: argparse.Namespace) -> None:
 
     device_requests = None if args.no_gpu else _device_requests(args.gpus)
 
+    uid, gid = _default_uid_gid()
+
     run_kwargs = dict(
         image=image,
         name=args.name,
@@ -432,6 +434,7 @@ def _run_container(args: argparse.Namespace) -> None:
         environment=envs,
         command=["bash", "-lc", command],
         device_requests=device_requests,
+        user=f"{uid}:{gid}",
     )
     if shm_bytes is not None:
         run_kwargs["shm_size"] = shm_bytes
