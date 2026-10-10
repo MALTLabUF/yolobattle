@@ -17,7 +17,10 @@ from typing import Protocol
 import yaml
 
 from yolobattle.model_training.cfg_maker import generate_cfg_file
-from yolobattle.model_training.darknet_ultralytics_translation import build_ultralytics_cmd
+from yolobattle.model_training.darknet_ultralytics_translation import (
+    auto_ultra_epochs_from_darknet,
+    build_ultralytics_cmd,
+)
 from yolobattle.model_training.evaluators_darknet import parse_darknet_summary
 from yolobattle.model_training.evaluators_ultra import (
     find_ultra_results_csv,
@@ -228,12 +231,33 @@ class UltralyticsBackend:
     name = "ultralytics"
 
     def prepare(self, profile, *, template, output_dir, gpu_indices, gpus_str):
+        adhoc_project = profile.darknet_project is not None
+        if adhoc_project:
+            from yolobattle.model_training.adhoc import prepare_adhoc_ultralytics
+            profile = prepare_adhoc_ultralytics(profile, output_dir)
+
         ypath = Path(profile.ultra_data)
-        shutil.copy2(ypath, output_dir / ypath.name)
+        yaml_copy = output_dir / ypath.name
+        if ypath.resolve() != yaml_copy.resolve():
+            shutil.copy2(ypath, yaml_copy)
         document = yaml.safe_load(ypath.read_text(encoding="utf-8"))
-        for key, destination in (("train", "train.txt"), ("val", "valid.txt")):
-            source = document.get(key)
-            if isinstance(source, str) and Path(source).is_file(): shutil.copy2(source, output_dir / destination)
+        if not adhoc_project:
+            for key, destination in (("train", "train.txt"), ("val", "valid.txt")):
+                source = document.get(key)
+                if isinstance(source, str) and Path(source).is_file():
+                    target = output_dir / destination
+                    if Path(source).resolve() != target.resolve():
+                        shutil.copy2(source, target)
+        if profile.epochs is None:
+            profile = replace(profile, epochs=auto_ultra_epochs_from_darknet(
+                data_yaml=profile.ultra_data,
+                iterations=profile.iterations,
+                batch=profile.batch_size,
+                subdivisions=profile.subdivisions,
+                steps=(),
+                burn_in=0,
+                round_up=True,
+            ))
         return profile, build_ultralytics_cmd(profile=profile, device_indices=gpu_indices, run_dir=str(output_dir))
 
     def native_metrics(self, profile, output_dir):

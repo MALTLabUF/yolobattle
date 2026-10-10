@@ -88,6 +88,7 @@ when adding a dataset. Existing imports of moved constants remain supported
 for compatibility; new code should import settings from the dataset module.
 
 ### Ad hoc Darknet dataset folders
+### Ad hoc Darknet project folders
 
 Use an existing Darknet project without adding a named profile:
 
@@ -98,11 +99,12 @@ yolobattle train --adhoc /path/to/handWM6
 The folder must contain one `.cfg` and one `.data` file. The `.data` file must
 specify `classes`, `names`, `train`, and `valid`, pointing to the names file and
 existing image lists. Images and YOLO `.txt` labels must be accessible inside
-the container. The cfg supplies the network architecture, width, height,
-batch, subdivisions, max_batches, and learning_rate. The architecture and
-training settings are preserved verbatim, including anchors, augmentation,
-and the learning-rate schedule. The cfg filename identifies the model in
-reports; a custom cfg does not reliably declare a YOLO version number.
+the container. In the default Darknet mode, the cfg supplies the network
+architecture, width, height, batch, subdivisions, max_batches, and
+learning_rate. The architecture and training settings are preserved verbatim,
+including anchors, augmentation, and the learning-rate schedule. The cfg
+filename identifies the model in reports; a custom cfg does not reliably
+declare a YOLO version number.
 
 The existing train/validation lists are preserved, with their paths normalized
 in the output folder. There is no download, re-splitting, anchor calculation,
@@ -148,8 +150,42 @@ If there are multiple cfg/data files, select them with
 `--cfg-path handWM6.cfg --data-path handWM6.data`. In ad hoc mode these paths
 are relative to the selected folder, or absolute. Training starts from scratch
 unless you explicitly supply `--weights weights/handWM6_last.weights`.
-Training overrides such as `--iterations` are rejected in this mode; edit a
-copy of the cfg to change its training settings. `--num-gpus` is supported.
+In Darknet mode, training overrides such as `--iterations` are rejected; edit
+a copy of the cfg to change its training settings. `--num-gpus` is supported.
+
+To train the same dataset with Ultralytics instead, choose its backend:
+
+```bash
+yolobattle train --adhoc /path/to/handWM6 \
+  --adhoc-backend ultralytics \
+  --ultra-model yolo11n.yaml
+```
+
+This reuses the `.data` class names and train/validation image lists, and
+supports adjacent YOLO labels or the standard `images/` and `labels/` layout.
+YoloBattle writes an Ultralytics dataset YAML and label-compatible run-local
+input view; it does not modify the source dataset. The Darknet `.cfg` supplies
+image size and batch; its learning rate is used as Ultralytics `lr0`, and
+`max_batches` is translated into an epoch budget. Its network architecture,
+anchors, augmentation settings, and learning-rate schedule are not translated.
+`yolo11n.yaml` selects the Ultralytics architecture and trains it from scratch.
+Ultralytics ad hoc runs also accept `--learning-rate`,
+`--iterations` (translated to epochs), `--training-seed`, and `--ultra-model`.
+
+For a cluster run, use the Ultralytics SIF and bind the dataset at a path
+visible inside the container:
+
+```bash
+DATASET="$HOME/handWM6"
+SINGULARITYENV_APPTAINER_ENVIRONMENT=1 singularity run --nv \
+  --bind "$HOME/yolobattle-workspace:/workspace" \
+  --bind "$HOME/yolobattle-outputs:/outputs" \
+  --bind "$DATASET:/datasets/handWM6:ro" \
+  "$HOME/yolobattle-ultralytics.sif" \
+  --adhoc /datasets/handWM6 \
+  --adhoc-backend ultralytics \
+  --ultra-model yolo11n.yaml
+```
 
 Relative paths resolve beside the referring file, then relative to the project
 folder. For a self-contained project moved from another machine, ad hoc mode

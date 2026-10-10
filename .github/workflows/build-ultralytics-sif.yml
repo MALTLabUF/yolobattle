@@ -1,0 +1,59 @@
+name: Build Ultralytics Apptainer image
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Ultralytics Apptainer SIF
+    runs-on: ubuntu-24.04
+    env:
+      IMAGE_NAME: yolobattle-ultralytics.sif
+
+    steps:
+      - name: Check out yolobattle
+        uses: actions/checkout@v4
+
+      - name: Install Apptainer
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes software-properties-common
+          sudo add-apt-repository --yes ppa:apptainer/ppa
+          sudo apt-get update
+          sudo apt-get install --yes apptainer
+          apptainer --version
+
+      - name: Build SIF
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="${GITHUB_WORKSPACE}/${IMAGE_NAME}"
+
+          # The definition installs packages during %post, so build with root.
+          sudo apptainer build --force "$image" apptainer/ultralytics/apptainer.def
+          sudo chown "$(id -u):$(id -g)" "$image"
+          sha256sum "$IMAGE_NAME" > "$IMAGE_NAME.sha256"
+
+      - name: Validate image and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$IMAGE_NAME"
+          sha256sum --check "$IMAGE_NAME.sha256"
+          apptainer inspect "$IMAGE_NAME"
+
+      - name: Upload SIF for users
+        uses: actions/upload-artifact@v4
+        with:
+          name: yolobattle-ultralytics-sif
+          path: |
+            ${{ env.IMAGE_NAME }}
+            ${{ env.IMAGE_NAME }}.sha256
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

@@ -414,7 +414,10 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
     train_count, valid_count, approx_epochs = backend.counts(p, Path(output_dir))
 
 
-    color_preset_for_csv = "source cfg" if p.cfg_source else (p.color_preset if p.color_preset is not None else "off")
+    color_preset_for_csv = (
+        "source cfg" if p.backend == "darknet" and p.cfg_source
+        else (p.color_preset if p.color_preset is not None else "off")
+    )
 
     # defaults so names exist even on failure
     coco_ap5095 = coco_ap50 = coco_ap75 = None
@@ -633,9 +636,10 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
     with zipfile.ZipFile(bundle_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
         for directory, subdirs, filenames in os.walk(output_dir):
             if p.darknet_project and Path(directory) == Path(output_dir):
-                # Prune native views rather than walking/stat-ing every image
-                # again. These can contain copied images on non-symlink hosts.
-                subdirs[:] = [name for name in subdirs if name != "darknet_inputs"]
+                # Prune run-local image views rather than packaging every
+                # image again. These may contain copies on non-symlink hosts.
+                subdirs[:] = [name for name in subdirs
+                              if name not in {"darknet_inputs", "ultralytics_inputs"}]
             for filename in filenames:
                 q = Path(directory) / filename
                 if q.name == bundle or q.suffix.lower() == ".weights":
@@ -647,14 +651,16 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
 
 # ---------- main ----------
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Train with a named profile or an existing Darknet project.")
+    ap = argparse.ArgumentParser(description="Train with a named profile or an existing Darknet dataset project.")
     profile_choice = ap.add_mutually_exclusive_group()
     profile_choice.add_argument("--profile", default="LegoGearsDarknetBenchmark", help="Profile name in profiles.PROFILES")
-    profile_choice.add_argument("--adhoc", metavar="FOLDER", help="Discover an existing Darknet cfg and data file in a folder")
-    ap.add_argument("--weights", help="Initial weights for a supplied cfg, relative to the project folder or absolute; default: train from scratch")
+    profile_choice.add_argument("--adhoc", metavar="FOLDER", help="Discover an existing Darknet cfg/data project and its image lists")
+    ap.add_argument("--weights", help="Initial Darknet weights for a supplied cfg, relative to the project folder or absolute")
     ap.add_argument("--path-map", action="append", default=[], metavar="OLD=NEW",
                     help="Override automatic relocation for a supplied cfg's data and image lists; repeatable")
-    adhoc_group = ap.add_argument_group("ad hoc Darknet project")
+    adhoc_group = ap.add_argument_group("ad hoc project")
+    adhoc_group.add_argument("--adhoc-backend", choices=("darknet", "ultralytics"), default="darknet",
+                             help="Training backend for --adhoc (default: darknet)")
     adhoc_group.add_argument("--data-path", help="Select a .data file when the folder contains multiple files")
     adhoc_group.add_argument("--cfg-path", help="Select a .cfg file when the folder contains multiple files")
 
@@ -662,10 +668,11 @@ if __name__ == "__main__":
     ap.add_argument("--template", default=None, help="Darknet template override (e.g., yolov7-tiny)")
     ap.add_argument("--val-frac", type=float, default=None, help="Validation fraction override")
     ap.add_argument("--num-gpus", type=int, default=None, help="Request N GPUs")
-    ap.add_argument("--iterations", type=int, default=None, help="Optimizer-update budget override")
+    ap.add_argument("--iterations", type=int, default=None,
+                    help="Optimizer-update budget override; converted to epochs for Ultralytics")
     ap.add_argument(
         "--training-seed", type=int, default=None,
-        help="PyTorch YOLOv4 training RNG seed; omit to generate and record a fresh seed per run",
+        help="Training RNG seed for PyTorch YOLOv4 or ad hoc Ultralytics runs",
     )
     ap.add_argument("--learning-rate", type=float, default=None, help="Learning rate override")
     ap.add_argument(
@@ -687,21 +694,33 @@ if __name__ == "__main__":
     args = ap.parse_args()
 
     if args.adhoc:
-        for option in (
-            "template", "val_frac", "iterations", "learning_rate", "color_preset",
-            "ultra_model", "dataset_root", "training_seed", "early_stopping_patience",
-        ):
+        if args.adhoc_backend == "darknet":
+            unsupported_adhoc_options = (
+                "template", "val_frac", "iterations", "learning_rate", "color_preset",
+                "ultra_model", "dataset_root", "training_seed", "early_stopping_patience",
+            )
+        else:
+            unsupported_adhoc_options = (
+                "template", "val_frac", "dataset_root", "early_stopping_patience",
+            )
+            if args.weights:
+                ap.error("--weights supplies Darknet weights; use --ultra-model for Ultralytics")
+        for option in unsupported_adhoc_options:
             if getattr(args, option) is not None:
                 ap.error(f"--{option.replace('_', '-')} cannot be combined with --adhoc; edit the source cfg/data instead")
         from yolobattle.model_training.adhoc import load_adhoc_profile
         try:
             base_profile = load_adhoc_profile(args.adhoc, cfg=args.cfg_path, data=args.data_path,
-                                              weights=args.weights, path_maps=args.path_map)
+                                              weights=args.weights, path_maps=args.path_map,
+                                              backend=args.adhoc_backend)
         except (ValueError, OSError) as exc:
             ap.error(str(exc))
-        print(f"[adhoc] {base_profile.name}: {base_profile.width}x{base_profile.height}, "
-              f"{base_profile.iterations} iterations, existing train/validation lists")
+        print(f"[adhoc] {base_profile.name} ({base_profile.backend}): "
+              f"{base_profile.width}x{base_profile.height}, {base_profile.iterations} iterations, "
+              "existing train/validation lists")
     else:
+        if args.adhoc_backend != "darknet":
+            ap.error("--adhoc-backend requires --adhoc")
         if args.data_path or args.cfg_path:
             ap.error("--data-path and --cfg-path require --adhoc")
         base_profile = get_profile(args.profile)
@@ -735,8 +754,8 @@ if __name__ == "__main__":
         overrides_used = True
 
     if args.training_seed is not None:
-        if p.backend != "pytorch_yolov4":
-            ap.error("--training-seed is only supported by pytorch_yolov4 profiles")
+        if p.backend != "pytorch_yolov4" and not (args.adhoc and p.backend == "ultralytics"):
+            ap.error("--training-seed is supported by pytorch_yolov4 profiles and ad hoc Ultralytics runs")
         if args.training_seed < 0:
             ap.error("--training-seed must be non-negative")
         # A seed controls reproducibility; it does not turn a sweep into a

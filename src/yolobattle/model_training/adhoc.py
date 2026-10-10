@@ -7,6 +7,7 @@ import json
 import math
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
+import shutil
 from typing import TYPE_CHECKING
 
 from .benchmark_definitions import DatasetSpec
@@ -59,8 +60,14 @@ def _select(root: Path, value: str | None, suffix: str) -> Path:
 
 
 def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None = None,
-                       weights: str | None = None, path_maps: list[str] | None = None) -> TrainProfile:
+                       weights: str | None = None, path_maps: list[str] | None = None,
+                       backend: str = "darknet") -> TrainProfile:
     from .profile_models import TrainProfile
+
+    if backend not in {"darknet", "ultralytics"}:
+        raise ValueError(f"Unsupported ad hoc backend: {backend}")
+    if backend == "ultralytics" and weights:
+        raise ValueError("--weights supplies Darknet weights; use --ultra-model for Ultralytics")
 
     root = Path(folder).expanduser().resolve()
     if not root.is_dir():
@@ -230,14 +237,18 @@ def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None 
     )
     safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", root.name).strip("._-") or "dataset"
     return TrainProfile(
-        name=f"adhoc_{safe_name}", backend="darknet", data_path=str(data_path),
+        name=f"adhoc_{safe_name}", backend=backend, data_path=str(data_path),
         cfg_out=str(cfg_path), width=width, height=height, batch_size=batch,
         subdivisions=subdivisions, iterations=iterations, learning_rate=learning_rate,
-        template=cfg_path.stem, val_fracs=(len(valid) / (len(train) + len(valid)),),
+        template=cfg_path.stem if backend == "darknet" else None,
+        val_fracs=(len(valid) / (len(train) + len(valid)),),
         dataset=DatasetSpec(root=str(root), sets=(), classes=classes, names=str(names_path),
                             prefix=safe_name, require_existing=True, class_names=names,
                             annotation_format="yolo"),
-        darknet_project=project, custom_data=True, cfg_source=str(cfg_path),
+        ultra_data="" if backend == "ultralytics" else "LG_v2.yaml",
+        ultra_model="yolo11n.yaml" if backend == "ultralytics" else "yolo11n.pt",
+        darknet_project=project, custom_data=True,
+        cfg_source=str(cfg_path) if backend == "darknet" else None,
     )
 
 
@@ -284,3 +295,103 @@ def prepare_adhoc(profile: TrainProfile, output_dir: Path) -> TrainProfile:
                              for old, new, method in project.path_relocations],
     }, indent=2), encoding="utf-8")
     return replace(profile, cfg_out=str(cfg), data_path=str(data))
+
+
+def _link_or_copy(source: Path, destination: Path) -> None:
+    """Expose a source image or label in a run-local view without changing it."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.is_symlink() or destination.exists():
+        destination.unlink()
+    try:
+        destination.symlink_to(source.resolve())
+    except OSError:
+        shutil.copy2(source, destination)
+
+
+def prepare_adhoc_ultralytics(profile: TrainProfile, output_dir: Path) -> TrainProfile:
+    """Create an Ultralytics dataset YAML and label-compatible views for a Darknet project."""
+    from .dataset_setup import write_ultralytics_yaml
+    from .label_paths import label_path_for_image
+
+    project = profile.darknet_project
+    if project is None:
+        raise ValueError("Missing ad hoc Darknet project")
+
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Preserve the source project for provenance while leaving it untouched.
+    (output_dir / "source.cfg").write_bytes(project.cfg_bytes)
+    shutil.copy2(project.data, output_dir / "source.data")
+    names_file = output_dir / "classes.names"
+    names_file.write_text("\n".join(project.names) + "\n", encoding="utf-8")
+    train_file = output_dir / "train.txt"
+    valid_file = output_dir / "valid.txt"
+    train_file.write_text("\n".join(project.train) + "\n", encoding="utf-8")
+    valid_file.write_text("\n".join(project.valid) + "\n", encoding="utf-8")
+
+    projected_lists: dict[str, Path] = {}
+    for split_name, images in (("train", project.train), ("valid", project.valid)):
+        view_dir = output_dir / "ultralytics_inputs" / split_name
+        view_images: list[str] = []
+        for index, image_name in enumerate(images):
+            image = Path(image_name)
+            view_image = view_dir / f"{index:08d}{image.suffix.lower()}"
+            _link_or_copy(image, view_image)
+
+            # Ultralytics expects labels beside images when the image paths do
+            # not contain an /images/ component. The local view normalizes both
+            # adjacent-label and standard images/labels layouts to that form.
+            label = label_path_for_image(image)
+            view_label = view_image.with_suffix(".txt")
+            if label.is_file():
+                _link_or_copy(label, view_label)
+            else:
+                view_label.write_text("", encoding="utf-8")
+            view_images.append(str(view_image))
+
+        view_list = output_dir / f"ultralytics_{split_name}.txt"
+        view_list.write_text("\n".join(view_images) + "\n", encoding="utf-8")
+        projected_lists[split_name] = view_list
+
+    data_yaml = write_ultralytics_yaml(
+        root=output_dir,
+        prefix="ultralytics_dataset",
+        classes=len(project.names),
+        names_file=names_file.name,
+        train_file=projected_lists["train"],
+        valid_file=projected_lists["valid"],
+    )
+
+    # Use a normalized Darknet data file for shared report/evaluation helpers,
+    # especially when the source project was relocated from another machine.
+    data_values = dict(project.data_values)
+    data_values.update({
+        "classes": str(len(project.names)),
+        "names": str(names_file),
+        "train": str(train_file),
+        "valid": str(valid_file),
+        "backup": str(output_dir),
+    })
+    normalized_data = output_dir / "dataset.data"
+    normalized_data.write_text(
+        "".join(f"{key} = {value}\n" for key, value in data_values.items()),
+        encoding="utf-8",
+    )
+
+    (output_dir / "dataset_split.json").write_text(json.dumps({
+        "source": "existing_darknet_lists",
+        "backend": "ultralytics",
+        "counts": {"train_total": len(project.train), "valid_total": len(project.valid)},
+    }, indent=2), encoding="utf-8")
+    (output_dir / "adhoc.json").write_text(json.dumps({
+        "source_cfg": str(project.cfg),
+        "source_data": str(project.data),
+        "cfg_sha256": hashlib.sha256(project.cfg_bytes).hexdigest(),
+        "backend": "ultralytics",
+        "model": profile.ultra_model,
+        "path_relocations": [dict(source=old, destination=new, method=method)
+                             for old, new, method in project.path_relocations],
+    }, indent=2), encoding="utf-8")
+
+    return replace(profile, data_path=str(normalized_data), ultra_data=str(data_yaml), cfg_source=None)
