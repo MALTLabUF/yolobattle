@@ -35,13 +35,13 @@ From: ultralytics/ultralytics:latest
         torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 \
         --index-url https://download.pytorch.org/whl/cu124
 
-    # Ultralytics' AMP self-check loads this small asset even when training from
-    # a YAML architecture. Bundle it so offline runs never try writing to the
-    # immutable SIF or fetching it from GitHub at startup.
+    # Ultralytics' AMP self-check currently uses YOLO26n even when training from
+    # a different YAML architecture. Bundle its small reference asset so offline
+    # runs do not try writing to the immutable SIF or fetching it at startup.
     mkdir -p /ultralytics/weights
     yolo settings weights_dir=/ultralytics/weights
     # Avoid the base image's source checkout shadowing its installed Python package.
-    (cd /tmp && python -c 'from pathlib import Path; from shutil import copy2; from ultralytics.utils.downloads import attempt_download_asset; p=Path(attempt_download_asset("yolo11n.pt")); expected=Path("/ultralytics/weights/yolo11n.pt"); copy2(p, expected); assert expected.is_file() and expected.stat().st_size>100_000, f"Missing AMP check asset: {expected}"')
+    (cd /tmp && python -c 'from pathlib import Path; from shutil import copy2; from ultralytics.utils.downloads import attempt_download_asset; p=Path(attempt_download_asset("yolo26n.pt")); expected=Path("/ultralytics/weights/yolo26n.pt"); copy2(p, expected); assert expected.is_file() and expected.stat().st_size>100_000, f"Missing AMP check asset: {expected}"')
 
     mkdir -p /workspace /outputs /ultralytics/.cache /workspace/.cache/datasets
     chmod -R a+rX /workspace /outputs /ultralytics

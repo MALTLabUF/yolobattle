@@ -169,7 +169,7 @@ image size and batch; its learning rate is used as Ultralytics `lr0`, and
 `max_batches` is translated into an epoch budget. Its network architecture,
 anchors, augmentation settings, and learning-rate schedule are not translated.
 `yolo11n.yaml` selects the Ultralytics architecture and trains it from scratch.
-The Ultralytics SIF bundles `yolo11n.pt` only for Ultralytics' AMP self-check;
+The Ultralytics SIF bundles `yolo26n.pt` only for Ultralytics' AMP self-check;
 it is not used to initialize this from-scratch training run.
 Ultralytics ad hoc runs also accept `--learning-rate`,
 `--iterations` (translated to epochs), `--training-seed`, and `--ultra-model`.
