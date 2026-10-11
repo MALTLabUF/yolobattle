@@ -2,7 +2,8 @@
 from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List, Any
-import argparse, json, subprocess, os, sys
+import argparse, hashlib, json, subprocess, os, sys
+import colorsys
 import numpy as np
 
 from PIL import Image, ImageDraw
@@ -18,8 +19,28 @@ CLASS_COLORS = {
     # fallback for any other class
 }
 
-DEFAULT_COLOR = (255, 255, 255)  # white outline for unknown classes
-TEXT_COLOR = (0, 0, 0)           # black text
+
+def _class_color(cls_name: str) -> tuple[int, int, int]:
+    """Return a stable, visible RGB color for any class name."""
+    name = cls_name.strip()
+    known_color = CLASS_COLORS.get(name.lower())
+    if known_color is not None:
+        return known_color
+
+    # Use the class name rather than Python's randomized hash so colors remain
+    # the same across processes and runs. Dark, saturated colors stand out on
+    # light images and leave room for readable label text.
+    digest = hashlib.sha256(name.casefold().encode("utf-8")).digest()
+    hue = int.from_bytes(digest[:4], "big") / 2**32
+    red, green, blue = colorsys.hls_to_rgb(hue, 0.40, 0.80)
+    return tuple(round(channel * 255) for channel in (red, green, blue))
+
+
+def _label_text_color(background: tuple[int, int, int]) -> tuple[int, int, int]:
+    """Choose black or white text based on the label background brightness."""
+    red, green, blue = background
+    brightness = (299 * red + 587 * green + 114 * blue) / 1000
+    return (0, 0, 0) if brightness >= 150 else (255, 255, 255)
 
 
 
@@ -54,7 +75,7 @@ def _draw_and_save_vis_image(
         x2 = float(det["x2"]); y2 = float(det["y2"])
         cls_name = str(det["cls_name"])
 
-        color = CLASS_COLORS.get(cls_name, DEFAULT_COLOR)
+        color = _class_color(cls_name)
         # box
         draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
 
@@ -70,7 +91,7 @@ def _draw_and_save_vis_image(
         tx2, ty2 = x1 + tw, ty1 + th
 
         draw.rectangle([tx1, ty1, tx2, ty2], fill=color)
-        draw.text((tx1, ty1), label, fill=TEXT_COLOR)
+        draw.text((tx1, ty1), label, fill=_label_text_color(color))
 
     # upscale at the end
     if vis_scale and vis_scale != 1.0:
