@@ -41,7 +41,7 @@ From: ultralytics/ultralytics:latest
     mkdir -p /ultralytics/weights
     yolo settings weights_dir=/ultralytics/weights
     # Avoid the base image's source checkout shadowing its installed Python package.
-    (cd /tmp && python -c 'from pathlib import Path; from ultralytics.utils.downloads import attempt_download_asset; p=Path(attempt_download_asset("yolo11n.pt")); expected=Path("/ultralytics/weights/yolo11n.pt"); assert p.resolve()==expected.resolve() and p.is_file() and p.stat().st_size>100_000, f"Unexpected AMP check asset path or size: {p}"')
+    (cd /tmp && python -c 'from pathlib import Path; from shutil import copy2; from ultralytics.utils.downloads import attempt_download_asset; p=Path(attempt_download_asset("yolo11n.pt")); expected=Path("/ultralytics/weights/yolo11n.pt"); copy2(p, expected); assert expected.is_file() and expected.stat().st_size>100_000, f"Missing AMP check asset: {expected}"')
 
     mkdir -p /workspace /outputs /ultralytics/.cache /workspace/.cache/datasets
     chmod -R a+rX /workspace /outputs /ultralytics
