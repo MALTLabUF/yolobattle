@@ -35,6 +35,13 @@ From: ultralytics/ultralytics:latest
         torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 \
         --index-url https://download.pytorch.org/whl/cu124
 
+    # Ultralytics' AMP self-check loads this small asset even when training from
+    # a YAML architecture. Bundle it so offline runs never try writing to the
+    # immutable SIF or fetching it from GitHub at startup.
+    mkdir -p /ultralytics/weights
+    yolo settings weights_dir=/ultralytics/weights
+    python -c 'from pathlib import Path; from ultralytics.utils.downloads import attempt_download_asset; p=Path(attempt_download_asset("yolo11n.pt")); expected=Path("/ultralytics/weights/yolo11n.pt"); assert p.resolve()==expected.resolve() and p.is_file() and p.stat().st_size>100_000, f"Unexpected AMP check asset path or size: {p}"'
+
     mkdir -p /workspace /outputs /ultralytics/.cache /workspace/.cache/datasets
     chmod -R a+rX /workspace /outputs /ultralytics
     chmod -R a+rwX /workspace /outputs /ultralytics/.cache /workspace/.cache

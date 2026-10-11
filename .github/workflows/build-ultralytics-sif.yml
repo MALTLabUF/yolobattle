@@ -46,6 +46,8 @@ jobs:
           test -s "$IMAGE_NAME"
           sha256sum --check "$IMAGE_NAME.sha256"
           apptainer inspect "$IMAGE_NAME"
+          apptainer exec "$IMAGE_NAME" python -c \
+            'from pathlib import Path; p = Path("/ultralytics/weights/yolo11n.pt"); assert p.is_file() and p.stat().st_size > 100_000, f"Missing bundled AMP check asset: {p}"'
 
       - name: Upload SIF for users
         uses: actions/upload-artifact@v4
