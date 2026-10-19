@@ -225,6 +225,10 @@ def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None 
         return images
 
     train, valid = read_list("train"), read_list("valid")
+    train_unique = set(train)
+    valid_unique = set(valid)
+    unique_images = train_unique | valid_unique
+    validation_coverage = len(valid_unique) / len(unique_images)
     for key in ("map", "test"):
         if values.get(key):
             values[key] = str(resolve_file(values[key], data_path.parent))
@@ -241,7 +245,10 @@ def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None 
         cfg_out=str(cfg_path), width=width, height=height, batch_size=batch,
         subdivisions=subdivisions, iterations=iterations, learning_rate=learning_rate,
         template=cfg_path.stem if backend == "darknet" else None,
-        val_fracs=(len(valid) / (len(train) + len(valid)),),
+        # Ad hoc lists may overlap or even be identical. Report the fraction
+        # of unique listed images that appear in validation, not the fraction
+        # of list entries (which would call identical lists a 50/50 split).
+        val_fracs=(validation_coverage,),
         dataset=DatasetSpec(root=str(root), sets=(), classes=classes, names=str(names_path),
                             prefix=safe_name, require_existing=True, class_names=names,
                             annotation_format="yolo"),
@@ -286,6 +293,12 @@ def prepare_adhoc(profile: TrainProfile, output_dir: Path) -> TrainProfile:
     (output_dir / "dataset_split.json").write_text(json.dumps({
         "source": "existing_darknet_lists",
         "counts": {"train_total": len(project.train), "valid_total": len(project.valid)},
+        "unique_images": {
+            "train": len(set(project.train)),
+            "valid": len(set(project.valid)),
+            "overlap": len(set(project.train) & set(project.valid)),
+            "union": len(set(project.train) | set(project.valid)),
+        },
     }, indent=2), encoding="utf-8")
     (output_dir / "adhoc.json").write_text(json.dumps({
         "source_cfg": str(project.cfg), "source_data": str(project.data),
