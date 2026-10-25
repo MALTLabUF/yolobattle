@@ -60,6 +60,9 @@ jobs:
             "https://raw.githubusercontent.com/hank-ai/darknet/master/cfg/yolov4-tiny.cfg" \
             --output "$offline_dir/darknet/cfg/yolov4-tiny.cfg"
           curl --fail --location --retry 3 \
+            "https://raw.githubusercontent.com/hank-ai/darknet/master/cfg/yolov4-custom.cfg" \
+            --output "$offline_dir/darknet/cfg/yolov4-custom.cfg"
+          curl --fail --location --retry 3 \
             "https://raw.githubusercontent.com/hank-ai/darknet/master/cfg/yolov7-tiny.cfg" \
             --output "$offline_dir/darknet/cfg/yolov7-tiny.cfg"
 
@@ -95,7 +98,7 @@ jobs:
               "darknet_commit": os.environ["DARKNET_COMMIT"],
               "dataset_archive": "datasets/legogears_2_dataset.zip",
               "dataset_sha256": "126980d3e43986bbd3d785ac16f6430e9bf3b726e65a30574bb3c9ba06a4462e",
-              "darknet_cfg_templates": ["yolov4-tiny.cfg", "yolov7-tiny.cfg"],
+              "darknet_cfg_templates": ["yolov4-tiny.cfg", "yolov4-custom.cfg", "yolov7-tiny.cfg"],
           }
           with open(sys.argv[1], "w", encoding="utf-8") as output:
               json.dump(manifest, output, indent=2)
@@ -129,6 +132,8 @@ jobs:
               'cd /opt/yolobattle/offline-assets && sha256sum --check SHA256SUMS'
             apptainer exec "$IMAGE_NAME" test -s \
               /opt/yolobattle/offline-assets/manifest.json
+            apptainer exec "$IMAGE_NAME" test -s \
+              /opt/yolobattle/offline-assets/darknet/cfg/yolov4-custom.cfg
             apptainer exec "$IMAGE_NAME" bash -lc '
               set -euo pipefail
               bundle=/opt/yolobattle/offline-assets/darknet/darknet-repository.bundle

@@ -32,6 +32,7 @@ TEMPLATE_URLS = {
     "yolov4-tiny-3l": "https://raw.githubusercontent.com/hank-ai/darknet/master/cfg/yolov4-tiny-3l.cfg",
 
     "yolov4": "https://raw.githubusercontent.com/hank-ai/darknet/master/cfg/yolov4.cfg",
+    "yolov4-custom": "https://raw.githubusercontent.com/hank-ai/darknet/master/cfg/yolov4-custom.cfg",
     "yolov7": "https://raw.githubusercontent.com/hank-ai/darknet/master/cfg/yolov7.cfg",
     "yolov3": "https://raw.githubusercontent.com/hank-ai/darknet/master/cfg/yolov3.cfg",
     "yolov3-tiny": "https://raw.githubusercontent.com/hank-ai/darknet/master/cfg/yolov3-tiny.cfg",
@@ -286,7 +287,7 @@ class AnchorLayout:
 def _anchor_cluster_count(template_name: str, num_heads: int, anchor_clusters: Optional[int]) -> int:
     if anchor_clusters and anchor_clusters > 1:
         return anchor_clusters
-    if template_name in ("yolov7", "yolov4", "yolov7-tiny", "yolov4-tiny-3l"):
+    if template_name in ("yolov7", "yolov4", "yolov4-custom", "yolov7-tiny", "yolov4-tiny-3l"):
         return 9
     if template_name == "yolov4-tiny":
         return 6
@@ -308,7 +309,7 @@ def calibrate_anchor_layout(
 
     if template_name == "yolov4-tiny" and num_heads == 2:
         group_order = [1, 0]  # large, small
-    elif template_name in ("yolov7", "yolov7-tiny", "yolov4") and num_heads == 3:
+    elif template_name in ("yolov7", "yolov7-tiny", "yolov4", "yolov4-custom") and num_heads == 3:
         group_order = [0, 1, 2]  # small, mid, large
     elif template_name == "yolov4-tiny-3l" and num_heads == 3:
         group_order = [2, 1, 0]  # large, mid, small
@@ -556,7 +557,7 @@ def generate_cfg_file(
     template_text = fetch_template_text(pick_template_url(template))
 
     if anchor_clusters is None:
-        if template in ("yolov7-tiny", "yolov4-tiny-3l", "yolov7", "yolov4"):
+        if template in ("yolov7-tiny", "yolov4-tiny-3l", "yolov7", "yolov4", "yolov4-custom"):
             anchor_clusters = 9
         elif template in ("yolov4-tiny", "yolov3-tiny"):
             anchor_clusters = 6
@@ -600,7 +601,7 @@ def generate_cfg_file(
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Generate a Darknet .cfg from an online template (yolov7-tiny/yolov4-tiny/4-tiny-3l), recalculating anchors from a .data file."
+        description="Generate a Darknet .cfg from an online or bundled template, recalculating anchors from a .data file."
     )
     ap.add_argument("--data", required=True, help="path to .data file (must include 'classes=' and 'train=')")
     ap.add_argument("--out", required=True, help="output .cfg path")
@@ -630,12 +631,12 @@ def main():
                     help="also write counters_per_class=<csv> into [net]")
 
     ap.add_argument("--template",
-                    choices=["yolov7-tiny", "yolov4-tiny", "yolov4-tiny-3l", "yolov7", "yolov4"],
+                    choices=["yolov7-tiny", "yolov4-tiny", "yolov4-tiny-3l", "yolov7", "yolov4", "yolov4-custom"],
                     default="yolov4-tiny")
 
     ap.add_argument(
         "--anchor-clusters", type=int, default=None,
-        help="total anchors to compute (defaults: 9 for yolov7/yolov7-tiny/yolov4/yolov4-tiny-3l, 6 for yolov4-tiny)"
+        help="total anchors to compute (defaults: 9 for yolov7/yolov7-tiny/yolov4/yolov4-custom/yolov4-tiny-3l, 6 for yolov4-tiny)"
     )
 
     args = ap.parse_args()
@@ -648,7 +649,7 @@ def main():
     template_name = args.template
     template_text = fetch_template_text(pick_template_url(template_name))
     anchor_clusters = (
-        9 if (args.anchor_clusters is None and template_name in ["yolov7-tiny", "yolov4-tiny-3l", "yolov7", "yolov4"])
+        9 if (args.anchor_clusters is None and template_name in ["yolov7-tiny", "yolov4-tiny-3l", "yolov7", "yolov4", "yolov4-custom"])
         else 6 if (args.anchor_clusters is None and template_name == "yolov4-tiny")
         else args.anchor_clusters
     )

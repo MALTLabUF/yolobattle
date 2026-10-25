@@ -1,4 +1,4 @@
-"""Load an existing Darknet project without a registered training profile."""
+"""Load Darknet dataset metadata, optionally using a selected model template."""
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
@@ -18,8 +18,8 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class DarknetProject:
-    cfg: Path
-    cfg_bytes: bytes
+    cfg: Path | None
+    cfg_bytes: bytes | None
     data: Path
     data_values: dict[str, str]
     names: tuple[str, ...]
@@ -61,18 +61,23 @@ def _select(root: Path, value: str | None, suffix: str) -> Path:
 
 def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None = None,
                        weights: str | None = None, path_maps: list[str] | None = None,
-                       backend: str = "darknet") -> TrainProfile:
+                       backend: str = "darknet", template: str | None = None) -> TrainProfile:
     from .profile_models import TrainProfile
 
     if backend not in {"darknet", "ultralytics"}:
         raise ValueError(f"Unsupported ad hoc backend: {backend}")
+    if template and backend != "darknet":
+        raise ValueError("A Darknet template requires the Darknet backend")
+    if template and cfg:
+        raise ValueError("--cfg-path cannot be combined with --template; the template supplies the cfg")
     if backend == "ultralytics" and weights:
         raise ValueError("--weights supplies Darknet weights; use --ultra-model for Ultralytics")
 
     root = Path(folder).expanduser().resolve()
     if not root.is_dir():
         raise ValueError(f"Ad hoc dataset folder does not exist: {root}")
-    cfg_path, data_path = _select(root, cfg, ".cfg"), _select(root, data, ".data")
+    cfg_path = None if template else _select(root, cfg, ".cfg")
+    data_path = _select(root, data, ".data")
     mappings = []
     for mapping in path_maps or []:
         old, sep, new = mapping.partition("=")
@@ -163,9 +168,14 @@ def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None 
         raise ValueError(f"Cannot find {value!r} referenced from {parent}. "
                          "Bind its directory into the container or use --path-map OLD_PREFIX=NEW_PREFIX.")
 
-    cfg_bytes = cfg_path.read_bytes()
+    cfg_bytes = cfg_path.read_bytes() if cfg_path else None
+    if template:
+        from .cfg_maker import fetch_template_text, pick_template_url
+        cfg_text = fetch_template_text(pick_template_url(template))
+    else:
+        cfg_text = cfg_bytes.decode("utf-8-sig")
     sections: list[tuple[str, dict[str, str]]] = []
-    for line in cfg_bytes.decode("utf-8-sig").splitlines():
+    for line in cfg_text.splitlines():
         clean = re.split(r"\s*[#;]", line, maxsplit=1)[0].strip()
         if clean.startswith("[") and clean.endswith("]"):
             sections.append((clean[1:-1].strip().lower(), {}))
@@ -173,7 +183,7 @@ def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None 
             sections[-1][1].update(_settings([line]))
     nets = [values for name, values in sections if name in {"net", "network"}]
     if len(nets) != 1:
-        raise ValueError(f"{cfg_path} must contain exactly one [net] section")
+        raise ValueError(f"{cfg_path or template} must contain exactly one [net] section")
     net = nets[0]
 
     def positive_int(key: str) -> int:
@@ -183,7 +193,7 @@ def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None 
                 return value
         except (KeyError, ValueError):
             pass
-        raise ValueError(f"{cfg_path}: [net] {key} must be a positive integer")
+        raise ValueError(f"{cfg_path or template}: [net] {key} must be a positive integer")
 
     width, height = positive_int("width"), positive_int("height")
     batch, subdivisions = positive_int("batch"), positive_int("subdivisions")
@@ -195,7 +205,7 @@ def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None 
         if not math.isfinite(learning_rate) or learning_rate <= 0:
             raise ValueError
     except (KeyError, ValueError):
-        raise ValueError(f"{cfg_path}: learning_rate must be a positive finite number") from None
+        raise ValueError(f"{cfg_path or template}: learning_rate must be a positive finite number") from None
 
     values = _settings(_lines(data_path))
     for key in ("classes", "names", "train", "valid"):
@@ -205,11 +215,17 @@ def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None 
     names = tuple(_lines(names_path))
     try:
         classes = int(values["classes"])
-        heads = [int(section["classes"]) for name, section in sections if name == "yolo"]
-    except (KeyError, ValueError):
-        raise ValueError(".data and every [yolo] head must specify integer classes") from None
-    if not names or classes != len(names) or not heads or any(n != classes for n in heads):
-        raise ValueError("Class counts must agree in .names, .data, and every [yolo] head")
+    except ValueError:
+        raise ValueError(f"{data_path}: classes must be an integer") from None
+    if not names or classes <= 0 or classes != len(names):
+        raise ValueError("Class counts must agree in .names and .data")
+    if not template:
+        try:
+            heads = [int(section["classes"]) for name, section in sections if name == "yolo"]
+        except (KeyError, ValueError):
+            raise ValueError("Every [yolo] head must specify integer classes") from None
+        if not heads or any(n != classes for n in heads):
+            raise ValueError("Class counts must agree in .names, .data, and every [yolo] head")
 
     # Resolve both metadata paths first so either can establish the old root
     # before processing images (the other metadata paths may be relative).
@@ -242,9 +258,9 @@ def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None 
     safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", root.name).strip("._-") or "dataset"
     return TrainProfile(
         name=f"adhoc_{safe_name}", backend=backend, data_path=str(data_path),
-        cfg_out=str(cfg_path), width=width, height=height, batch_size=batch,
+        cfg_out=str(cfg_path or root / f"{template}.cfg"), width=width, height=height, batch_size=batch,
         subdivisions=subdivisions, iterations=iterations, learning_rate=learning_rate,
-        template=cfg_path.stem if backend == "darknet" else None,
+        template=(template or cfg_path.stem) if backend == "darknet" else None,
         # Ad hoc lists may overlap or even be identical. Report the fraction
         # of unique listed images that appear in validation, not the fraction
         # of list entries (which would call identical lists a 50/50 split).
@@ -255,12 +271,12 @@ def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None 
         ultra_data="" if backend == "ultralytics" else "LG_v2.yaml",
         ultra_model="yolo11n.yaml" if backend == "ultralytics" else "yolo11n.pt",
         darknet_project=project, custom_data=True,
-        cfg_source=str(cfg_path) if backend == "darknet" else None,
+        cfg_source=str(cfg_path) if backend == "darknet" and cfg_path else None,
     )
 
 
 def prepare_adhoc(profile: TrainProfile, output_dir: Path) -> TrainProfile:
-    """Snapshot the cfg and normalize data paths in a writable run directory."""
+    """Snapshot the source cfg and normalize data paths in a writable run directory."""
     from .dataset_setup import project_paths_for_darknet
 
     project = profile.darknet_project
@@ -268,10 +284,21 @@ def prepare_adhoc(profile: TrainProfile, output_dir: Path) -> TrainProfile:
         raise ValueError("Missing ad hoc project")
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    cfg = output_dir / project.cfg.name
+    generate_cfg = profile.cfg_source is None
+    if generate_cfg:
+        cfg_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", profile.template or "generated") + ".cfg"
+    else:
+        cfg_name = project.cfg.name
+    cfg = output_dir / cfg_name
     data = output_dir / "dataset.data"
     names = output_dir / "classes.names"
-    cfg.write_bytes(project.cfg_bytes)
+    if project.cfg_bytes is not None:
+        if generate_cfg:
+            (output_dir / "source.cfg").write_bytes(project.cfg_bytes)
+        else:
+            cfg.write_bytes(project.cfg_bytes)
+    elif not generate_cfg:
+        raise ValueError("A source cfg is required when no template is selected")
     names.write_text("\n".join(project.names) + "\n", encoding="utf-8")
     native_lists = {}
     for key, images in (("train", project.train), ("valid", project.valid)):
@@ -301,8 +328,10 @@ def prepare_adhoc(profile: TrainProfile, output_dir: Path) -> TrainProfile:
         },
     }, indent=2), encoding="utf-8")
     (output_dir / "adhoc.json").write_text(json.dumps({
-        "source_cfg": str(project.cfg), "source_data": str(project.data),
-        "cfg_sha256": hashlib.sha256(project.cfg_bytes).hexdigest(),
+        "source_cfg": str(project.cfg) if project.cfg else None,
+        "source_data": str(project.data),
+        "cfg_sha256": hashlib.sha256(project.cfg_bytes).hexdigest() if project.cfg_bytes else None,
+        "template": profile.template if generate_cfg else None,
         "initial_weights": str(project.weights) if project.weights else None,
         "path_relocations": [dict(source=old, destination=new, method=method)
                              for old, new, method in project.path_relocations],

@@ -665,7 +665,8 @@ if __name__ == "__main__":
     adhoc_group.add_argument("--cfg-path", help="Select a .cfg file when the folder contains multiple files")
 
     #cloudmesh ee
-    ap.add_argument("--template", default=None, help="Darknet template override (e.g., yolov7-tiny)")
+    ap.add_argument("--template", default=None,
+                    help="Darknet template override; with --adhoc, generate a cfg for the supplied dataset")
     ap.add_argument("--val-frac", type=float, default=None, help="Validation fraction override")
     ap.add_argument("--num-gpus", type=int, default=None, help="Request N GPUs")
     ap.add_argument("--iterations", type=int, default=None,
@@ -694,11 +695,18 @@ if __name__ == "__main__":
     args = ap.parse_args()
 
     if args.adhoc:
+        generate_adhoc_cfg = args.adhoc_backend == "darknet" and args.template is not None
+        if generate_adhoc_cfg:
+            from yolobattle.model_training.cfg_maker import TEMPLATE_URLS
+            args.template = args.template.strip().lower()
+            if args.template not in TEMPLATE_URLS:
+                ap.error(f"Unknown Darknet template {args.template!r}; choose one of: {', '.join(TEMPLATE_URLS)}")
         if args.adhoc_backend == "darknet":
             unsupported_adhoc_options = (
-                "template", "val_frac", "iterations", "learning_rate", "color_preset",
-                "ultra_model", "dataset_root", "training_seed", "early_stopping_patience",
+                "val_frac", "ultra_model", "dataset_root", "training_seed", "early_stopping_patience",
             )
+            if not generate_adhoc_cfg:
+                unsupported_adhoc_options += ("iterations", "learning_rate", "color_preset")
         else:
             unsupported_adhoc_options = (
                 "template", "val_frac", "dataset_root", "early_stopping_patience",
@@ -712,13 +720,15 @@ if __name__ == "__main__":
         try:
             base_profile = load_adhoc_profile(args.adhoc, cfg=args.cfg_path, data=args.data_path,
                                               weights=args.weights, path_maps=args.path_map,
-                                              backend=args.adhoc_backend)
+                                              backend=args.adhoc_backend,
+                                              template=args.template if generate_adhoc_cfg else None)
         except (ValueError, OSError) as exc:
             ap.error(str(exc))
         print(f"[adhoc] {base_profile.name} ({base_profile.backend}): "
               f"{base_profile.width}x{base_profile.height}, {base_profile.iterations} iterations, "
               "existing train/validation lists")
     else:
+        generate_adhoc_cfg = False
         if args.adhoc_backend != "darknet":
             ap.error("--adhoc-backend requires --adhoc")
         if args.data_path or args.cfg_path:

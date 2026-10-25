@@ -87,7 +87,6 @@ Reusable classes and helpers stay in `benchmark_definitions.py`,
 when adding a dataset. Existing imports of moved constants remain supported
 for compatibility; new code should import settings from the dataset module.
 
-### Ad hoc Darknet dataset folders
 ### Ad hoc Darknet project folders
 
 Use an existing Darknet project without adding a named profile:
@@ -96,28 +95,33 @@ Use an existing Darknet project without adding a named profile:
 yolobattle train --adhoc /path/to/handWM6
 ```
 
-The folder must contain one `.cfg` and one `.data` file. The `.data` file must
-specify `classes`, `names`, `train`, and `valid`, pointing to the names file and
-existing image lists. Images and YOLO `.txt` labels must be accessible inside
-the container. In the default Darknet mode, the cfg supplies the network
-architecture, width, height, batch, subdivisions, max_batches, and
-learning_rate. The architecture and training settings are preserved verbatim,
-including anchors, augmentation, and the learning-rate schedule. The cfg
-filename identifies the model in reports; a custom cfg does not reliably
-declare a YOLO version number.
+The folder must contain one `.data` file specifying `classes`, `names`,
+`train`, and `valid`. The names file, image lists, images, and YOLO `.txt`
+labels must be accessible inside the container. Without `--template`, the
+folder must also contain a `.cfg`; YoloBattle trains that cfg unchanged.
+
+To train a different Darknet model, select its cfg template, for example
+`--template yolov4-custom`. This treats `yolov4-custom` as a model choice like
+`yolov4` or `yolov7`. The folder's cfg is ignored and may be absent. The
+selected template supplies the network, image size, batch settings, learning
+rate, and update budget. YoloBattle sets the dataset class count and detection
+filters, recalculates anchors from the training labels, updates the learning
+rate schedule, and writes the resulting cfg to the run output. Use
+`--iterations` and `--learning-rate` to override template defaults.
 
 The existing train/validation lists are preserved, with their paths normalized
-in the output folder. There is no download, re-splitting, anchor calculation,
-or budget equalization. Source files are not modified. Checkpoints and the
-usual benchmark reports are written under `/outputs/adhoc_<folder>/...` in
+in the output folder. There is no dataset download, re-splitting, or budget
+equalization.
+Source files are not modified. Checkpoints and the usual benchmark reports are
+written under `/outputs/adhoc_<folder>/...` in
 the container, or `artifacts/outputs/adhoc_<folder>/...` when run directly.
 
 Adjacent `.txt` annotations and separate `images/` / `labels/` directories
 use the same label-resolution helper as dataset-backed profiles. Where needed,
 Darknet receives a run-local adjacent-label view under `darknet_inputs/`, while
 evaluation retains the original image paths. That input view is excluded from
-the benchmark ZIP. `adhoc.json` records the cfg hash and the path-prefix
-relocations used, including whether each was automatic or explicit.
+the benchmark ZIP. `adhoc.json` records the selected template or source cfg
+hash and any path-prefix relocations.
 
 For the Singularity command, after updating the SIF's training code:
 
@@ -131,12 +135,12 @@ SINGULARITYENV_APPTAINER_ENVIRONMENT=1 singularity run --nv \
   --adhoc "$DATASET"
 ```
 
-**An already-built SIF does not contain this new CLI option.** Rebuild it from
-the updated checkout, or copy the updated `yolobattle/src` directory to the HPC
-host and add `--bind "$HOME/yolobattle/src:/opt/app/src:ro"` before the SIF
-filename (adjust the host path to your checkout). This reuses the existing
-offline image's Darknet build assets; the ad hoc cfg and dataset come from
-your folder.
+An already-built SIF needs updated YoloBattle code to accept `--template` with
+`--adhoc`. Rebuild it from the updated checkout. For an existing ad hoc cfg,
+you can instead copy the updated `yolobattle/src` directory to the HPC host
+and add `--bind "$HOME/yolobattle/src:/opt/app/src:ro"` before the SIF filename
+(adjust the host path to your checkout). The `yolov4-custom` offline template
+also requires the newly built image, because the old image lacks that asset.
 
 The host-side wrapper also supports this option and mounts the folder at its
 original absolute path:
@@ -146,12 +150,32 @@ yolobattle apptainer run --image "$HOME/yolobattle-darknet-legogears-offline.sif
   --adhoc "$HOME/handWM6"
 ```
 
-If there are multiple cfg/data files, select them with
-`--cfg-path handWM6.cfg --data-path handWM6.data`. In ad hoc mode these paths
-are relative to the selected folder, or absolute. Training starts from scratch
-unless you explicitly supply `--weights weights/handWM6_last.weights`.
-In Darknet mode, training overrides such as `--iterations` are rejected; edit
-a copy of the cfg to change its training settings. `--num-gpus` is supported.
+If there are multiple data files, select one with `--data-path handWM6.data`.
+Without `--template`, select among multiple cfg files with
+`--cfg-path handWM6.cfg`. Paths may be relative to the selected folder or
+absolute. Training starts from scratch unless you explicitly supply compatible
+initial weights with `--weights`.
+Without `--template`, Darknet training overrides such as `--iterations` are
+rejected; edit a copy of the cfg to change its training settings. With
+`--template`, `--iterations`, `--learning-rate`, and `--color-preset` can change
+the generated cfg. `--num-gpus` is supported in either mode.
+
+To train the mounted `handWM6` dataset with the bundled `yolov4-custom` model:
+
+```bash
+DATASET="$HOME/handWM6"  # change to your dataset folder
+SINGULARITYENV_APPTAINER_ENVIRONMENT=1 singularity run --nv \
+  --bind "$HOME/yolobattle-workspace:/workspace" \
+  --bind "$HOME/yolobattle-outputs:/outputs" \
+  --bind "$DATASET:/datasets/handWM6:ro" \
+  "$HOME/yolobattle-darknet-legogears-offline.sif" \
+  --adhoc /datasets/handWM6 \
+  --template yolov4-custom \
+  --iterations 30000
+```
+
+Set `--iterations` to the update budget you want. Without it, the selected
+template's `max_batches` is used.
 
 To train the same dataset with Ultralytics instead, choose its backend:
 
@@ -332,11 +356,14 @@ yolobattle apptainer run --image "$PWD/yolobattle-darknet.sif" --profile <PROFIL
 
 To build one self-contained offline image for the Lego Gears Darknet profiles,
 set the `include_legogears_offline` workflow input to `true`. The workflow
-downloads and packages the Lego Gears archive, the `yolov4-tiny`/`yolov7-tiny`
-cfg templates, and a Git bundle for the selected Darknet ref and commit. The
-source is still compiled when the container starts, so the build can use the
-GPU visible on the HPC node. The resulting artifact contains
-`yolobattle-darknet-legogears-offline.sif` and its SHA-256 checksum.
+downloads and packages the Lego Gears archive, the `yolov4-tiny`,
+`yolov4-custom`, and `yolov7-tiny` cfg templates, and a Git bundle for the
+selected Darknet ref and commit. The `yolov4-custom` template can also generate
+a cfg for a dataset handled by a Darknet profile when selected with
+`--template yolov4-custom`. The source is still compiled when the container
+starts, so the build can use the GPU visible on the HPC node. The resulting
+artifact contains `yolobattle-darknet-legogears-offline.sif` and its SHA-256
+checksum.
 
 Verify and run that image with:
 
@@ -367,8 +394,9 @@ dataset and generated split files stay there; training outputs go to
 The offline SIF uses only its bundled assets and errors if one is missing. The
 wrapper does not auto-build a missing offline image. The bundled dataset supports
 `LegoGearsDarknetBenchmark` and `LegoGearsDarknet`. With updated training code,
-`--adhoc` can also use this image with your own mounted cfg and dataset, as
-described above. The regular SIF keeps the existing online behavior for other profiles.
+`--adhoc` can also use this image with your own mounted cfg and dataset, and
+`--template yolov4-custom` generates a cfg in the run output as described
+above. The regular SIF keeps the existing online behavior for other profiles.
 
 ## Slurm Batch (cloudmesh-ee API)
 
