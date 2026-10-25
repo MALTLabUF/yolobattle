@@ -1,6 +1,7 @@
 # LegoGearsFiles/hw_info.py
 import os
 import json
+import csv
 import re
 import ctypes
 import shutil
@@ -328,6 +329,38 @@ def gpu_inventory(cm_gpu):
     return names, vram
 
 
+def peak_gpu_vram_used_mib(logfile: str | Path, gpu_ids: list[int] | None) -> int | None:
+    """Return the largest sampled VRAM use for the selected nvidia-smi GPUs."""
+    if not gpu_ids:
+        return None
+
+    selected = set(gpu_ids)
+    peak = None
+    try:
+        with Path(logfile).open(encoding="utf-8", errors="replace", newline="") as stream:
+            rows = csv.reader(stream)
+            header = next(rows, [])
+            columns = {}
+            for column, label in enumerate(header):
+                match = re.fullmatch(r"(\d+) vram_mem_used MiB", label.strip())
+                if match and int(match.group(1)) in selected:
+                    columns[column] = int(match.group(1))
+            if set(columns.values()) != selected:
+                return None
+
+            for row in rows:
+                for column in columns:
+                    if column >= len(row):
+                        continue
+                    match = re.fullmatch(r"(\d+)\s*MiB", row[column].strip(), re.IGNORECASE)
+                    if match:
+                        used = int(match.group(1))
+                        peak = used if peak is None else max(peak, used)
+    except (OSError, csv.Error):
+        return None
+    return peak
+
+
 def resolve_gpu_selection(cm_gpu):
     """
     Decide which GPUs to use and how to pass them to Darknet/Ultralytics.
@@ -369,6 +402,7 @@ def resolve_gpu_selection(cm_gpu):
                 "logical": logical_idx,
                 "name": name,
                 "bus_id": eight,
+                "smi_index": meta.get("smi_index"),
             })
         return out
 

@@ -306,6 +306,12 @@ confusion matrices, benchmark CSV/YAML, and bundles. Add a backend by
 implementing that adapter contract and registering it; do not add framework
 branches to the shared benchmark stages.
 
+The benchmark CSV/YAML includes `Peak GPU VRAM Used (MiB)`, the highest
+device-wide VRAM reading for the selected training GPUs in `mylogfile.log`.
+With multiple training GPUs, this is the largest reading on any one GPU, not
+their sum. The value is blank when GPU mapping or usable samples are missing.
+`GPU VRAM` is the device's total capacity.
+
 Canonical profiles share immutable benchmark policies: geometry, split rule,
 iteration budget, export confidence, NMS IoU, checkpoint selection, COCO IoUs,
 and confusion-matrix thresholds. The policy fingerprint is written to each

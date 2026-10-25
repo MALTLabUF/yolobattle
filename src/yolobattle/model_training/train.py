@@ -14,7 +14,8 @@ from cloudmesh.common.StopWatch import StopWatch
 from cloudmesh.gpu.gpu import Gpu
 
 from yolobattle.model_training.hw_info import (
-    summarize_env, resolve_gpu_selection, fio_seq_rw, get_disk_info, cpu_threads_used
+    summarize_env, resolve_gpu_selection, fio_seq_rw, get_disk_info, cpu_threads_used,
+    peak_gpu_vram_used_mib,
 )
 from yolobattle.model_training.profiles import TrainProfile, effective_policy, get_profile, equalize_for_split
 from yolobattle.model_training.dataset_setup import make_split, IMG_EXTS
@@ -340,6 +341,10 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
         mapped = [l2s.get(li) for li in indices]
         if all(m is not None for m in mapped) and len(mapped) > 0:
             watch_indices = mapped  # host indices that align with your selected logical indices
+    elif not sel.get("runtime_devices"):
+        watch_indices = indices  # SMI-only selection already uses host indices
+    elif gpu.count == 1 and len(indices) == 1:
+        watch_indices = [0]
 
     try:
         if gpu.count > 0:
@@ -379,6 +384,10 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
                 print(f"[gpuwatch] stopped")
             except Exception as e:
                 print(f"[gpuwatch] stop err: {e}")
+
+    peak_vram_mib = peak_gpu_vram_used_mib(watch_log, watch_indices)
+    if peak_vram_mib is not None:
+        print(f"[gpuwatch] peak VRAM used: {peak_vram_mib} MiB")
 
     # Post: metrics, env, bundle
     bench = StopWatch.get_benchmark()
@@ -549,6 +558,7 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
         "CPU Threads Used": cpu_threads_used(),
         "GPU Name": gpu_name,
         "GPU VRAM": vram,
+        "Peak GPU VRAM Used (MiB)": peak_vram_mib,
         "Total Memory": sysinfo["mem.total"],
         "OS": "WSL" if is_wsl() else sysinfo["uname.system"],
         "Architecture": sysinfo["uname.machine"],
