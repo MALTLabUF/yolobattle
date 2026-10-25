@@ -25,6 +25,8 @@ VAL_FRAC="{experiment.val_frac}"
 NUM_GPUS="{experiment.num_gpus}"
 ULTRA_MODEL="{experiment.ultra_model}"
 COLOR_PRESET="{experiment.color_preset}"
+FLIPLR="{experiment.fliplr}"
+FLIPUD="{experiment.flipud}"
 DATASET_ROOT="{system.dataset_root}"
 EE_REPEAT="{experiment.repeat}"
 
@@ -44,6 +46,14 @@ fi
 
 if [[ -n "$COLOR_PRESET" && "$COLOR_PRESET" != "None" && "$COLOR_PRESET" != "null" ]]; then
   TRAIN_ARGS+=(--color-preset "$COLOR_PRESET")
+fi
+
+if [[ -n "$FLIPLR" && "$FLIPLR" != "None" && "$FLIPLR" != "null" ]]; then
+  TRAIN_ARGS+=(--fliplr "$FLIPLR")
+fi
+
+if [[ -n "$FLIPUD" && "$FLIPUD" != "None" && "$FLIPUD" != "null" ]]; then
+  TRAIN_ARGS+=(--flipud "$FLIPUD")
 fi
 
 if [[ -n "$DATASET_ROOT" && "$DATASET_ROOT" != "None" && "$DATASET_ROOT" != "null" ]]; then

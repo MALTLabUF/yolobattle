@@ -9,6 +9,8 @@ experiment:
   num_gpus: [1]
   ultra_model: ["yolo11m.pt"]
   color_preset: [null]
+  fliplr: [null]
+  flipud: [null]
   repeat: [1]
 
 ee:

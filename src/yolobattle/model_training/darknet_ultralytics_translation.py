@@ -245,8 +245,16 @@ def build_ultralytics_cmd(*, profile, device_indices: list[int], run_dir: str) -
         workers_arg = f"workers={workers} "
 
     
-    # NEW: derive Ultralytics color/aug args from profile.color_preset
+    # Color presets do not control geometric flips.
     color_aug = _ultra_color_args_from_profile(profile)
+    flip_aug = ""
+    for name in ("fliplr", "flipud"):
+        value = getattr(profile, name, None)
+        if value is not None:
+            probability = float(value)
+            if not 0.0 <= probability <= 1.0:
+                raise ValueError(f"{name} must be between 0 and 1")
+            flip_aug += f"{name}={probability} "
 
     core = (
         f"task=detect mode=train "
@@ -261,6 +269,7 @@ def build_ultralytics_cmd(*, profile, device_indices: list[int], run_dir: str) -
         f"{seed_arg}{det_arg}{workers_arg}"
         f"cache=False "
         f"{color_aug}"
+        f"{flip_aug}"
     )
 
     return (

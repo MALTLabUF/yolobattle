@@ -584,6 +584,12 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
         "Valid Images": valid_count,
         "Approx Epochs": approx_epochs,
         "Color Preset": color_preset_for_csv,
+        "Ultralytics fliplr": (
+            p.fliplr if p.fliplr is not None else "default"
+        ) if p.backend == "ultralytics" else None,
+        "Ultralytics flipud": (
+            p.flipud if p.flipud is not None else "default"
+        ) if p.backend == "ultralytics" else None,
 
         # Seeds (explicit provenance)
         "Split Seed": None if p.custom_data else getattr(p.dataset, "split_seed", None),
@@ -691,6 +697,10 @@ if __name__ == "__main__":
         help="PyTorch YOLOv4: validations without AP50-95 improvement before stopping; 0 disables it",
     )
     ap.add_argument("--color-preset", default=None, help="Color preset override")
+    ap.add_argument("--fliplr", type=float, default=None,
+                    help="Ultralytics horizontal flip probability, 0 to 1 (0 disables it)")
+    ap.add_argument("--flipud", type=float, default=None,
+                    help="Ultralytics vertical flip probability, 0 to 1 (0 disables it)")
     ap.add_argument("--ultra-model", default=None, help="Ultralytics model override")
 
     ap.add_argument(
@@ -796,6 +806,17 @@ if __name__ == "__main__":
 
     if args.color_preset is not None:
         p = replace(p, color_preset=args.color_preset, color_presets=(args.color_preset,))
+        overrides_used = True
+
+    if args.fliplr is not None or args.flipud is not None:
+        if p.backend != "ultralytics":
+            ap.error("--fliplr and --flipud are only supported by Ultralytics")
+        for name in ("fliplr", "flipud"):
+            value = getattr(args, name)
+            if value is not None:
+                if not 0.0 <= value <= 1.0:
+                    ap.error(f"--{name} must be between 0 and 1")
+                p = replace(p, **{name: value})
         overrides_used = True
 
     if args.ultra_model is not None:

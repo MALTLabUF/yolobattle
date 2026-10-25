@@ -197,6 +197,13 @@ The Ultralytics SIF bundles `yolo26n.pt` only for Ultralytics' AMP self-check;
 it is not used to initialize this from-scratch training run.
 Ultralytics ad hoc runs also accept `--learning-rate`,
 `--iterations` (translated to epochs), `--training-seed`, and `--ultra-model`.
+Use `--fliplr 0 --flipud 0` to disable horizontal and vertical flips for
+letter datasets where mirroring changes the class. Both options accept a
+probability from 0 to 1; omitting one keeps the Ultralytics default. They also
+work with named Ultralytics profiles and Slurm batch experiments. A color
+preset does not change either flip probability.
+Rebuild the Ultralytics SIF from this source to use these arguments with a
+direct `singularity run` command.
 
 For a cluster run, use the Ultralytics SIF and bind the dataset at a path
 visible inside the container:
@@ -210,7 +217,8 @@ SINGULARITYENV_APPTAINER_ENVIRONMENT=1 singularity run --nv \
   "$HOME/yolobattle-ultralytics.sif" \
   --adhoc /datasets/handWM6 \
   --adhoc-backend ultralytics \
-  --ultra-model yolo11n.yaml
+  --ultra-model yolo11n.yaml \
+  --fliplr 0 --flipud 0
 ```
 
 Relative paths resolve beside the referring file, then relative to the project

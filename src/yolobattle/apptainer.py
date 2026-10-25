@@ -383,6 +383,8 @@ def _generate_slurm_batch(args: argparse.Namespace, backend: str, root: Path) ->
         "num_gpus": None,
         "learning_rate": None,
         "color_preset": None,
+        "fliplr": None,
+        "flipud": None,
         "repeat": None,
     }
     if backend == "darknet":
