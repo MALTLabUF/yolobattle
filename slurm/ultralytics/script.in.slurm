@@ -24,6 +24,7 @@ PROFILE="{experiment.profile}"
 VAL_FRAC="{experiment.val_frac}"
 NUM_GPUS="{experiment.num_gpus}"
 ULTRA_MODEL="{experiment.ultra_model}"
+IMGSZ="{experiment.imgsz}"
 COLOR_PRESET="{experiment.color_preset}"
 FLIPLR="{experiment.fliplr}"
 FLIPUD="{experiment.flipud}"
@@ -42,6 +43,10 @@ fi
 
 if [[ -n "$ULTRA_MODEL" && "$ULTRA_MODEL" != "None" && "$ULTRA_MODEL" != "null" ]]; then
   TRAIN_ARGS+=(--ultra-model "$ULTRA_MODEL")
+fi
+
+if [[ -n "$IMGSZ" && "$IMGSZ" != "None" && "$IMGSZ" != "null" ]]; then
+  TRAIN_ARGS+=(--imgsz "$IMGSZ")
 fi
 
 if [[ -n "$COLOR_PRESET" && "$COLOR_PRESET" != "None" && "$COLOR_PRESET" != "null" ]]; then

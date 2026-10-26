@@ -222,6 +222,18 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
     # run_once changes into each output directory. Keep every later path
     # absolute so logs, cfg files, and artifacts are not resolved twice.
     out_root = os.path.abspath(out_root)
+    if p.backend == "ultralytics":
+        # The trainer accepts a scalar only. Apply an explicit override to
+        # output naming and evaluation as well as training; keep legacy
+        # profile geometry untouched when no override was requested.
+        requested_size = p.ultra_imgsz if p.ultra_imgsz is not None else max(p.width, p.height)
+        imgsz = int(requested_size)
+        if imgsz <= 0 or imgsz % 32:
+            raise ValueError("Ultralytics imgsz must be a positive multiple of 32")
+        if p.ultra_imgsz is None:
+            p = replace(p, ultra_imgsz=imgsz)
+        else:
+            p = replace(p, width=imgsz, height=imgsz, ultra_imgsz=imgsz)
     p = replace(p, policy=effective_policy(p))
     # Keep the data split reproducible while making repeated PyTorch jobs
     # independent training trials unless the caller explicitly pins a seed.
@@ -584,6 +596,7 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
         "Valid Images": valid_count,
         "Approx Epochs": approx_epochs,
         "Color Preset": color_preset_for_csv,
+        "Ultralytics imgsz": p.ultra_imgsz if p.backend == "ultralytics" else None,
         "Ultralytics fliplr": (
             p.fliplr if p.fliplr is not None else "default"
         ) if p.backend == "ultralytics" else None,
@@ -702,6 +715,8 @@ if __name__ == "__main__":
     ap.add_argument("--flipud", type=float, default=None,
                     help="Ultralytics vertical flip probability, 0 to 1 (0 disables it)")
     ap.add_argument("--ultra-model", default=None, help="Ultralytics model override")
+    ap.add_argument("--imgsz", type=int, default=None,
+                    help="Ultralytics square training size; positive multiple of 32")
 
     ap.add_argument(
         "--dataset-root",
@@ -821,6 +836,14 @@ if __name__ == "__main__":
 
     if args.ultra_model is not None:
         p = replace(p, ultra_model=args.ultra_model)
+        overrides_used = True
+
+    if args.imgsz is not None:
+        if p.backend != "ultralytics":
+            ap.error("--imgsz is only supported by Ultralytics")
+        if args.imgsz <= 0 or args.imgsz % 32:
+            ap.error("--imgsz must be a positive multiple of 32")
+        p = replace(p, ultra_imgsz=args.imgsz)
         overrides_used = True
 
     if args.dataset_root is not None:

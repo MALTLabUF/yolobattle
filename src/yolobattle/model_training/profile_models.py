@@ -48,6 +48,8 @@ class TrainProfile:
     epochs: int | None = None
     ultra_data: str = "LG_v2.yaml"
     ultra_model: str = "yolo11n.pt"
+    # Scalar Ultralytics training size; None uses the longer profile dimension.
+    ultra_imgsz: int | None = None
     pytorch_cfg: str = "cfg/yolov4-tiny.cfg"
     # PyTorch-YOLOv4 only.  Zero runs the complete scheduled update budget.
     early_stopping_patience: int = 0
@@ -94,11 +96,13 @@ def lego_gears_profile(
 
 
 def effective_policy(profile: TrainProfile) -> BenchmarkPolicy | None:
-    """Resolve a run's effective split and update budget for provenance."""
+    """Resolve a run's effective split, geometry, and update budget."""
     if profile.policy is None or not profile.val_fracs:
         return profile.policy
     return replace(
         profile.policy,
+        width=profile.width,
+        height=profile.height,
         validation_fraction=float(profile.val_fracs[0]),
         iterations=profile.iterations,
     )

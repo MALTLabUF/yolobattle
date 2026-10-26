@@ -196,7 +196,13 @@ anchors, augmentation settings, and learning-rate schedule are not translated.
 The Ultralytics SIF bundles `yolo26n.pt` only for Ultralytics' AMP self-check;
 it is not used to initialize this from-scratch training run.
 Ultralytics ad hoc runs also accept `--learning-rate`,
-`--iterations` (translated to epochs), `--training-seed`, and `--ultra-model`.
+`--iterations` (translated to epochs), `--training-seed`, `--ultra-model`,
+and `--imgsz 1280`. Ultralytics training uses one square target size; when
+letterboxed, a 1280x960 frame fits the 1280 target without being shrunk.
+Training augmentations can still transform it. With an explicit `--imgsz`,
+the reported input size and evaluation target match the training target.
+For a Slurm batch, set `imgsz: [1280]` and a single model such as
+`ultra_model: ["yolo11l.pt"]` in `slurm/ultralytics/config.batch.yaml`.
 Use `--fliplr 0 --flipud 0` to disable horizontal and vertical flips for
 letter datasets where mirroring changes the class. Both options accept a
 probability from 0 to 1; omitting one keeps the Ultralytics default. They also
