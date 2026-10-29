@@ -30,10 +30,10 @@ From: ultralytics/ultralytics:latest
         Pillow \
         git+https://github.com/cloudmesh/cloudmesh-gpu.git
 
-    # Target the cluster nodes' CUDA 12.4 driver instead of the base image's newer CUDA build.
+    # Use a CUDA build with Blackwell (B200) kernels.
     python -m pip install --no-cache-dir --force-reinstall \
-        torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 \
-        --index-url https://download.pytorch.org/whl/cu124
+        torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 \
+        --index-url https://download.pytorch.org/whl/cu128
 
     # Ultralytics' AMP self-check currently uses YOLO26n even when training from
     # a different YAML architecture. Bundle its small reference asset so offline
