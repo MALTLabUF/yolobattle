@@ -395,6 +395,10 @@ def transform_cfg_from_text(template_text: str, *,
                             ) -> List[str]:
 
     lines = cfg_text_to_lines(template_text)
+    if template_name == "yolov4-custom":
+        # Older templates set stopbackward=800, freezing randomly initialized
+        # backbone layers and causing NaN loss in scratch training.
+        lines = [line for line in lines if not re.match(r"^\s*stopbackward\s*=", line, re.I)]
     secs  = find_section_ranges(lines)
 
     # ---- patch [net] ----
