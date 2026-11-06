@@ -83,6 +83,56 @@ class AdhocTest(unittest.TestCase):
             self.load()
         self.assertEqual(self.load(cfg="hand.cfg").template, "hand")
 
+    def test_template_inherits_only_source_size_and_batch_update_budget(self):
+        from yolobattle.model_training.backends import DarknetBackend
+
+        template_cfg = (CFG.replace("width=224", "width=416")
+                          .replace("height=160", "height=320")
+                          .replace("batch=8", "batch=64")
+                          .replace("subdivisions=4", "subdivisions=8")
+                          .replace("max_batches=37", "max_batches=2000")
+                          .replace("learning_rate=.002", "learning_rate=.001")
+                          .replace("letter_box=1", "letter_box=0"))
+        with patch("yolobattle.model_training.cfg_maker.fetch_template_text", return_value=template_cfg):
+            profile = self.load(template="yolov4-tiny-3l")
+        self.assertEqual((profile.width, profile.height, profile.batch_size,
+                          profile.subdivisions, profile.iterations, profile.learning_rate),
+                         (224, 160, 8, 4, 37, .001))
+        self.assertEqual(profile.template, "yolov4-tiny-3l")
+        self.assertIsNone(profile.cfg_source)
+        self.assertFalse(profile.darknet_project.letter_box)
+        self.assertEqual(len(profile.darknet_project.train), 2)
+        self.assertEqual(len(profile.darknet_project.valid), 1)
+
+        with patch("yolobattle.model_training.backends.generate_cfg_file") as generate:
+            staged, _ = DarknetBackend().prepare(profile, template=profile.template,
+                                                 output_dir=self.out, gpu_indices=[], gpus_str="")
+        self.assertEqual(Path(staged.cfg_out).name, "yolov4-tiny-3l.cfg")
+        self.assertEqual((self.out / "source.cfg").read_text(), CFG)
+        self.assertEqual(generate.call_args.kwargs["template"], "yolov4-tiny-3l")
+        self.assertEqual((generate.call_args.kwargs["width"], generate.call_args.kwargs["height"],
+                          generate.call_args.kwargs["batch_size"],
+                          generate.call_args.kwargs["subdivisions"],
+                          generate.call_args.kwargs["iterations"],
+                          generate.call_args.kwargs["learning_rate"]),
+                         (224, 160, 8, 4, 37, .001))
+        provenance = json.loads((self.out / "adhoc.json").read_text())
+        self.assertEqual(provenance["template"], "yolov4-tiny-3l")
+        self.assertEqual(provenance["source_cfg"], str((self.root / "hand.cfg").resolve()))
+
+    def test_template_without_cfg_uses_template_defaults_and_multiple_cfgs_need_selection(self):
+        template_cfg = CFG.replace("width=224", "width=416")
+        (self.root / "second.cfg").write_text(CFG.replace("width=224", "width=320"))
+        with patch("yolobattle.model_training.cfg_maker.fetch_template_text", return_value=template_cfg):
+            with self.assertRaisesRegex(ValueError, "Expected one .cfg"):
+                self.load(template="yolov4-tiny-3l")
+            self.assertEqual(self.load(template="yolov4-tiny-3l", cfg="second.cfg").width, 320)
+            (self.root / "second.cfg").unlink()
+            (self.root / "hand.cfg").unlink()
+            profile = self.load(template="yolov4-tiny-3l")
+        self.assertEqual(profile.width, 416)
+        self.assertIsNone(profile.darknet_project.cfg)
+
     def test_path_map_relocates_metadata_and_images_from_windows(self):
         (self.root / "hand.data").write_text(
             "classes=1\nnames=C:\\old\\hand.names\ntrain=C:\\old\\hand_train.txt\nvalid=C:\\old\\hand_valid.txt\n")

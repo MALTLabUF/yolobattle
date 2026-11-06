@@ -691,7 +691,7 @@ if __name__ == "__main__":
     adhoc_group.add_argument("--adhoc-backend", choices=("darknet", "ultralytics"), default="darknet",
                              help="Training backend for --adhoc (default: darknet)")
     adhoc_group.add_argument("--data-path", help="Select a .data file when the folder contains multiple files")
-    adhoc_group.add_argument("--cfg-path", help="Select a .cfg file when the folder contains multiple files")
+    adhoc_group.add_argument("--cfg-path", help="Select a .cfg file when the folder contains multiple files; with --template, inherit its size and batch/update budget")
 
     #cloudmesh ee
     ap.add_argument("--template", default=None,

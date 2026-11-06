@@ -102,12 +102,16 @@ folder must also contain a `.cfg`; YoloBattle trains that cfg unchanged.
 
 To train a different Darknet model, select its cfg template, for example
 `--template yolov4-custom`. This treats `yolov4-custom` as a model choice like
-`yolov4` or `yolov7`. The folder's cfg is ignored and may be absent. The
-selected template supplies the network, image size, batch settings, learning
-rate, and update budget. YoloBattle sets the dataset class count and detection
+`yolov4` or `yolov7`. If the folder has a cfg, its width, height, batch,
+subdivisions, and max_batches are retained. The selected template supplies the
+architecture and learning rate; other settings follow the template and
+YoloBattle's cfg-generation defaults. If the folder has no
+cfg, the template supplies those five settings too. Select among multiple cfgs
+with `--cfg-path`. YoloBattle sets the dataset class count and detection
 filters, recalculates anchors from the training labels, updates the learning
 rate schedule, and writes the resulting cfg to the run output. Use
-`--iterations` and `--learning-rate` to override template defaults.
+`--iterations` and `--learning-rate` to override their respective defaults.
+When a source cfg exists, YoloBattle saves it as `source.cfg` in the run output.
 
 The existing train/validation lists are preserved, with their paths normalized
 in the output folder. There is no dataset download, re-splitting, or budget
@@ -151,8 +155,8 @@ yolobattle apptainer run --image "$HOME/yolobattle-darknet-legogears-offline.sif
 ```
 
 If there are multiple data files, select one with `--data-path handWM6.data`.
-Without `--template`, select among multiple cfg files with
-`--cfg-path handWM6.cfg`. Paths may be relative to the selected folder or
+Select among multiple cfg files with `--cfg-path handWM6.cfg`, with or without
+`--template`. Paths may be relative to the selected folder or
 absolute. Training starts from scratch unless you explicitly supply compatible
 initial weights with `--weights`.
 Without `--template`, Darknet training overrides such as `--iterations` are

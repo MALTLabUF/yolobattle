@@ -68,15 +68,18 @@ def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None 
         raise ValueError(f"Unsupported ad hoc backend: {backend}")
     if template and backend != "darknet":
         raise ValueError("A Darknet template requires the Darknet backend")
-    if template and cfg:
-        raise ValueError("--cfg-path cannot be combined with --template; the template supplies the cfg")
     if backend == "ultralytics" and weights:
         raise ValueError("--weights supplies Darknet weights; use --ultra-model for Ultralytics")
 
     root = Path(folder).expanduser().resolve()
     if not root.is_dir():
         raise ValueError(f"Ad hoc dataset folder does not exist: {root}")
-    cfg_path = None if template else _select(root, cfg, ".cfg")
+    # A cfg is optional with a template. Its [net] supplies only geometry and
+    # batch/update budget; the selected template supplies all other settings.
+    if template and not cfg and not any(root.glob("*.cfg")):
+        cfg_path = None
+    else:
+        cfg_path = _select(root, cfg, ".cfg")
     data_path = _select(root, data, ".data")
     mappings = []
     for mapping in path_maps or []:
@@ -174,28 +177,45 @@ def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None 
         cfg_text = fetch_template_text(pick_template_url(template))
     else:
         cfg_text = cfg_bytes.decode("utf-8-sig")
-    sections: list[tuple[str, dict[str, str]]] = []
-    for line in cfg_text.splitlines():
-        clean = re.split(r"\s*[#;]", line, maxsplit=1)[0].strip()
-        if clean.startswith("[") and clean.endswith("]"):
-            sections.append((clean[1:-1].strip().lower(), {}))
-        elif sections:
-            sections[-1][1].update(_settings([line]))
+    def parse_sections(text: str) -> list[tuple[str, dict[str, str]]]:
+        result: list[tuple[str, dict[str, str]]] = []
+        for line in text.splitlines():
+            clean = re.split(r"\s*[#;]", line, maxsplit=1)[0].strip()
+            if clean.startswith("[") and clean.endswith("]"):
+                result.append((clean[1:-1].strip().lower(), {}))
+            elif result:
+                result[-1][1].update(_settings([line]))
+        return result
+
+    sections = parse_sections(cfg_text)
     nets = [values for name, values in sections if name in {"net", "network"}]
     if len(nets) != 1:
         raise ValueError(f"{cfg_path or template} must contain exactly one [net] section")
     net = nets[0]
 
+    source_net = None
+    if template and cfg_bytes is not None:
+        source_nets = [values for name, values in parse_sections(cfg_bytes.decode("utf-8-sig"))
+                       if name in {"net", "network"}]
+        if len(source_nets) != 1:
+            raise ValueError(f"{cfg_path} must contain exactly one [net] section")
+        source_net = source_nets[0]
+
+    budget_net = source_net if source_net is not None else net
+    budget_path = cfg_path if source_net is not None else cfg_path or template
+
     def positive_int(key: str) -> int:
         try:
-            value = int(net[key])
+            value = int(budget_net[key])
             if value > 0:
                 return value
         except (KeyError, ValueError):
             pass
-        raise ValueError(f"{cfg_path or template}: [net] {key} must be a positive integer")
+        raise ValueError(f"{budget_path}: [net] {key} must be a positive integer")
 
     width, height = positive_int("width"), positive_int("height")
+    if template and (width % 32 or height % 32):
+        raise ValueError(f"{budget_path}: width and height must be multiples of 32")
     batch, subdivisions = positive_int("batch"), positive_int("subdivisions")
     iterations = positive_int("max_batches")
     if batch % subdivisions:
@@ -258,7 +278,7 @@ def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None 
     safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", root.name).strip("._-") or "dataset"
     return TrainProfile(
         name=f"adhoc_{safe_name}", backend=backend, data_path=str(data_path),
-        cfg_out=str(cfg_path or root / f"{template}.cfg"), width=width, height=height, batch_size=batch,
+        cfg_out=str(root / f"{template}.cfg" if template else cfg_path), width=width, height=height, batch_size=batch,
         subdivisions=subdivisions, iterations=iterations, learning_rate=learning_rate,
         template=(template or cfg_path.stem) if backend == "darknet" else None,
         # Ad hoc lists may overlap or even be identical. Report the fraction
@@ -271,7 +291,7 @@ def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None 
         ultra_data="" if backend == "ultralytics" else "LG_v2.yaml",
         ultra_model="yolo11n.yaml" if backend == "ultralytics" else "yolo11n.pt",
         darknet_project=project, custom_data=True,
-        cfg_source=str(cfg_path) if backend == "darknet" and cfg_path else None,
+        cfg_source=str(cfg_path) if backend == "darknet" and cfg_path and not template else None,
     )
 
 
