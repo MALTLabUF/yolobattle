@@ -113,12 +113,39 @@ rate schedule, and writes the resulting cfg to the run output. Use
 `--iterations` and `--learning-rate` to override their respective defaults.
 When a source cfg exists, YoloBattle saves it as `source.cfg` in the run output.
 
-The existing train/validation lists are preserved, with their paths normalized
-in the output folder. There is no dataset download, re-splitting, or budget
+By default, the existing train/validation lists are preserved, with their paths
+normalized in the output folder. There is no dataset download or budget
 equalization.
 Source files are not modified. Checkpoints and the usual benchmark reports are
 written under `/outputs/adhoc_<folder>/...` in
 the container, or `artifacts/outputs/adhoc_<folder>/...` when run directly.
+
+To create a reproducible held-out validation set from the source `train` list,
+pass `--adhoc-split heldout --val-frac 0.20 --split-seed 9001`. This mode
+deduplicates the training images, ranks their dataset-relative paths by SHA-256
+with the seed, and assigns approximately 20% to validation. The original
+`valid` list is ignored; it may be absent. Both backends use the same generated
+lists. The run saves `train.txt`, `valid.txt`, and `dataset_split.json` with
+the requested and actual fractions, counts, seed, and hashes of the source and
+resulting image identifiers. Repeating the command with the same relative image
+paths and seed yields the same split, even under a different mount path.
+Images must reside inside the mounted ad hoc dataset folder for this mode.
+Changing the source train list changes its fingerprint and may change the split.
+`--training-seed` is separate and does not control validation membership.
+
+For example, with an updated Ultralytics SIF and a read-only dataset bind:
+
+```bash
+SINGULARITYENV_APPTAINER_ENVIRONMENT=1 singularity run --nv \
+  --bind "$HOME/yolobattle-workspace:/workspace" \
+  --bind "$HOME/yolobattle-outputs:/outputs" \
+  --bind "$DATASET:/datasets/SUST-ALT-NAMES:ro" \
+  "$HOME/yolobattle-ultralytics.sif" \
+  --adhoc /datasets/SUST-ALT-NAMES \
+  --adhoc-backend ultralytics \
+  --ultra-model yolo11n.yaml --fliplr 0 --flipud 0 \
+  --adhoc-split heldout --val-frac 0.20 --split-seed 9001
+```
 
 Adjacent `.txt` annotations and separate `images/` / `labels/` directories
 use the same label-resolution helper as dataset-backed profiles. Where needed,

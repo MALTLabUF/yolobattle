@@ -556,6 +556,10 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
             # don't fail the run if printing breaks
             pass
 
+    adhoc_split_manifest = (
+        p.darknet_project.split_manifest
+        if p.custom_data and p.darknet_project else None
+    )
     row = {
         "Backend": p.backend,
         "Profile": p.name,
@@ -605,7 +609,8 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
         ) if p.backend == "ultralytics" else None,
 
         # Seeds (explicit provenance)
-        "Split Seed": None if p.custom_data else getattr(p.dataset, "split_seed", None),
+        "Split Seed": (adhoc_split_manifest["seed"] if adhoc_split_manifest
+                       else None if p.custom_data else getattr(p.dataset, "split_seed", None)),
         "Training Seed": getattr(p, "training_seed", None),
         "Repeat": ee_repeat,  # <- NEW: repeat index from EE_REPEAT env (will be empty in CSV if None)
 
@@ -692,6 +697,10 @@ if __name__ == "__main__":
                              help="Training backend for --adhoc (default: darknet)")
     adhoc_group.add_argument("--data-path", help="Select a .data file when the folder contains multiple files")
     adhoc_group.add_argument("--cfg-path", help="Select a .cfg file when the folder contains multiple files; with --template, inherit its size and batch/update budget")
+    adhoc_group.add_argument("--adhoc-split", choices=("heldout",),
+                             help="Generate a disjoint validation split from the ad hoc train list")
+    adhoc_group.add_argument("--split-seed", type=int,
+                             help="Seed for --adhoc-split heldout (default: 9001)")
 
     #cloudmesh ee
     ap.add_argument("--template", default=None,
@@ -730,6 +739,15 @@ if __name__ == "__main__":
     args = ap.parse_args()
 
     if args.adhoc:
+        if args.adhoc_split:
+            if args.val_frac is None or not 0.0 < args.val_frac < 1.0:
+                ap.error("--adhoc-split heldout requires --val-frac between 0 and 1")
+            if args.split_seed is not None and args.split_seed < 0:
+                ap.error("--split-seed must be non-negative")
+        elif args.split_seed is not None:
+            ap.error("--split-seed requires --adhoc-split heldout")
+        elif args.val_frac is not None:
+            ap.error("--val-frac with --adhoc requires --adhoc-split heldout")
         generate_adhoc_cfg = args.adhoc_backend == "darknet" and args.template is not None
         if generate_adhoc_cfg:
             from yolobattle.model_training.cfg_maker import TEMPLATE_URLS
@@ -738,13 +756,13 @@ if __name__ == "__main__":
                 ap.error(f"Unknown Darknet template {args.template!r}; choose one of: {', '.join(TEMPLATE_URLS)}")
         if args.adhoc_backend == "darknet":
             unsupported_adhoc_options = (
-                "val_frac", "ultra_model", "dataset_root", "training_seed", "early_stopping_patience",
+                "ultra_model", "dataset_root", "training_seed", "early_stopping_patience",
             )
             if not generate_adhoc_cfg:
                 unsupported_adhoc_options += ("iterations", "learning_rate", "color_preset")
         else:
             unsupported_adhoc_options = (
-                "template", "val_frac", "dataset_root", "early_stopping_patience",
+                "template", "dataset_root", "early_stopping_patience",
             )
             if args.weights:
                 ap.error("--weights supplies Darknet weights; use --ultra-model for Ultralytics")
@@ -756,14 +774,18 @@ if __name__ == "__main__":
             base_profile = load_adhoc_profile(args.adhoc, cfg=args.cfg_path, data=args.data_path,
                                               weights=args.weights, path_maps=args.path_map,
                                               backend=args.adhoc_backend,
-                                              template=args.template if generate_adhoc_cfg else None)
+                                              template=args.template if generate_adhoc_cfg else None,
+                                              split_fraction=args.val_frac if args.adhoc_split else None,
+                                              split_seed=args.split_seed if args.adhoc_split else None)
         except (ValueError, OSError) as exc:
             ap.error(str(exc))
         print(f"[adhoc] {base_profile.name} ({base_profile.backend}): "
               f"{base_profile.width}x{base_profile.height}, {base_profile.iterations} iterations, "
-              "existing train/validation lists")
+              f"{'generated held-out split' if args.adhoc_split else 'existing train/validation lists'}")
     else:
         generate_adhoc_cfg = False
+        if args.adhoc_split or args.split_seed is not None:
+            ap.error("--adhoc-split and --split-seed require --adhoc")
         if args.adhoc_backend != "darknet":
             ap.error("--adhoc-backend requires --adhoc")
         if args.data_path or args.cfg_path:

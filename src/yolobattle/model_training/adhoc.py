@@ -28,6 +28,55 @@ class DarknetProject:
     weights: Path | None
     letter_box: bool
     path_relocations: tuple[tuple[str, str, str], ...]
+    split_manifest: dict | None = None
+
+
+def _image_ids_sha256(image_ids: list[str]) -> str:
+    return hashlib.sha256(("\n".join(sorted(image_ids)) + "\n").encode("utf-8")).hexdigest()
+
+
+def _heldout_split(root: Path, source_train: tuple[str, ...], fraction: float,
+                   seed: int) -> tuple[tuple[str, ...], tuple[str, ...], dict]:
+    """Select a stable, disjoint split from the source train list only."""
+    images_by_id = {}
+    for image_name in source_train:
+        image = Path(image_name).resolve()
+        try:
+            image_id = image.relative_to(root).as_posix()
+        except ValueError:
+            raise ValueError(
+                f"Held-out splitting requires images inside the ad hoc dataset folder: {image}"
+            ) from None
+        images_by_id[image_id] = str(image)
+    image_ids = sorted(images_by_id)
+    if len(image_ids) < 2:
+        raise ValueError("Held-out splitting requires at least two distinct training images")
+    valid_count = min(len(image_ids) - 1, max(1, round(len(image_ids) * fraction)))
+    ranked = sorted(image_ids, key=lambda image_id: (
+        hashlib.sha256(f"{seed}\0{image_id}".encode("utf-8")).digest(), image_id
+    ))
+    valid_ids = sorted(ranked[:valid_count])
+    valid_set = set(valid_ids)
+    train_ids = [image_id for image_id in image_ids if image_id not in valid_set]
+    manifest = {
+        "source": "adhoc_train_heldout",
+        "algorithm": "sha256-seed-relative-path-v1",
+        "seed": seed,
+        "requested_val_fraction": fraction,
+        "actual_val_fraction": len(valid_ids) / len(image_ids),
+        "source_train_total": len(source_train),
+        "source_unique_images": len(image_ids),
+        "source_images_sha256": _image_ids_sha256(image_ids),
+        "train_images_sha256": _image_ids_sha256(train_ids),
+        "valid_images_sha256": _image_ids_sha256(valid_ids),
+        "counts": {"train_total": len(train_ids), "valid_total": len(valid_ids)},
+        "unique_images": {
+            "train": len(train_ids), "valid": len(valid_ids),
+            "overlap": 0, "union": len(image_ids),
+        },
+    }
+    return (tuple(images_by_id[image_id] for image_id in train_ids),
+            tuple(images_by_id[image_id] for image_id in valid_ids), manifest)
 
 
 def _lines(path: Path) -> list[str]:
@@ -61,7 +110,9 @@ def _select(root: Path, value: str | None, suffix: str) -> Path:
 
 def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None = None,
                        weights: str | None = None, path_maps: list[str] | None = None,
-                       backend: str = "darknet", template: str | None = None) -> TrainProfile:
+                       backend: str = "darknet", template: str | None = None,
+                       split_fraction: float | None = None,
+                       split_seed: int | None = None) -> TrainProfile:
     from .profile_models import TrainProfile
 
     if backend not in {"darknet", "ultralytics"}:
@@ -70,6 +121,15 @@ def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None 
         raise ValueError("A Darknet template requires the Darknet backend")
     if backend == "ultralytics" and weights:
         raise ValueError("--weights supplies Darknet weights; use --ultra-model for Ultralytics")
+    if split_fraction is None and split_seed is not None:
+        raise ValueError("--split-seed requires a held-out ad hoc split")
+    if split_fraction is not None:
+        if not math.isfinite(split_fraction) or not 0.0 < split_fraction < 1.0:
+            raise ValueError("Held-out validation fraction must be between 0 and 1")
+        if split_seed is None:
+            split_seed = 9001
+        if split_seed < 0:
+            raise ValueError("--split-seed must be non-negative")
 
     root = Path(folder).expanduser().resolve()
     if not root.is_dir():
@@ -228,7 +288,10 @@ def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None 
         raise ValueError(f"{cfg_path or template}: learning_rate must be a positive finite number") from None
 
     values = _settings(_lines(data_path))
-    for key in ("classes", "names", "train", "valid"):
+    required_fields = ("classes", "names", "train") if split_fraction is not None else (
+        "classes", "names", "train", "valid"
+    )
+    for key in required_fields:
         if not values.get(key):
             raise ValueError(f"{data_path} is missing {key}=")
     names_path = resolve_file(values["names"], data_path.parent, metadata=True)
@@ -247,9 +310,10 @@ def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None 
         if not heads or any(n != classes for n in heads):
             raise ValueError("Class counts must agree in .names, .data, and every [yolo] head")
 
-    # Resolve both metadata paths first so either can establish the old root
-    # before processing images (the other metadata paths may be relative).
-    lists = {key: resolve_file(values[key], data_path.parent, metadata=True) for key in ("train", "valid")}
+    # Resolve metadata before images so relocated source paths can establish
+    # their old root. A generated split uses the source train list only.
+    list_keys = ("train",) if split_fraction is not None else ("train", "valid")
+    lists = {key: resolve_file(values[key], data_path.parent, metadata=True) for key in list_keys}
     inferred_prefixes = tuple(sorted(inferred, key=len, reverse=True))
     anchors.update(PurePosixPath(old).name for old in inferred)
 
@@ -260,7 +324,11 @@ def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None 
             raise ValueError(f"{key} image list is empty: {path}")
         return images
 
-    train, valid = read_list("train"), read_list("valid")
+    train = read_list("train")
+    valid = read_list("valid") if split_fraction is None else ()
+    split_manifest = None
+    if split_fraction is not None:
+        train, valid, split_manifest = _heldout_split(root, train, split_fraction, split_seed)
     train_unique = set(train)
     valid_unique = set(valid)
     unique_images = train_unique | valid_unique
@@ -274,6 +342,7 @@ def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None 
         weights=resolve_file(weights, root) if weights else None,
         letter_box=net.get("letter_box", "0") == "1",
         path_relocations=tuple(sorted(relocations)),
+        split_manifest=split_manifest,
     )
     safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", root.name).strip("._-") or "dataset"
     return TrainProfile(
@@ -284,7 +353,7 @@ def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None 
         # Ad hoc lists may overlap or even be identical. Report the fraction
         # of unique listed images that appear in validation, not the fraction
         # of list entries (which would call identical lists a 50/50 split).
-        val_fracs=(validation_coverage,),
+        val_fracs=(split_fraction if split_fraction is not None else validation_coverage,),
         dataset=DatasetSpec(root=str(root), sets=(), classes=classes, names=str(names_path),
                             prefix=safe_name, require_existing=True, class_names=names,
                             annotation_format="yolo"),
@@ -337,7 +406,7 @@ def prepare_adhoc(profile: TrainProfile, output_dir: Path) -> TrainProfile:
     values = dict(project.data_values)
     values.update(native_lists, names=str(names), backup=str(output_dir))
     data.write_text("".join(f"{key} = {value}\n" for key, value in values.items()), encoding="utf-8")
-    (output_dir / "dataset_split.json").write_text(json.dumps({
+    split_manifest = project.split_manifest or {
         "source": "existing_darknet_lists",
         "counts": {"train_total": len(project.train), "valid_total": len(project.valid)},
         "unique_images": {
@@ -346,7 +415,9 @@ def prepare_adhoc(profile: TrainProfile, output_dir: Path) -> TrainProfile:
             "overlap": len(set(project.train) & set(project.valid)),
             "union": len(set(project.train) | set(project.valid)),
         },
-    }, indent=2), encoding="utf-8")
+    }
+    (output_dir / "dataset_split.json").write_text(
+        json.dumps(split_manifest, indent=2), encoding="utf-8")
     (output_dir / "adhoc.json").write_text(json.dumps({
         "source_cfg": str(project.cfg) if project.cfg else None,
         "source_data": str(project.data),
@@ -441,11 +512,13 @@ def prepare_adhoc_ultralytics(profile: TrainProfile, output_dir: Path) -> TrainP
         encoding="utf-8",
     )
 
-    (output_dir / "dataset_split.json").write_text(json.dumps({
+    split_manifest = project.split_manifest or {
         "source": "existing_darknet_lists",
         "backend": "ultralytics",
         "counts": {"train_total": len(project.train), "valid_total": len(project.valid)},
-    }, indent=2), encoding="utf-8")
+    }
+    (output_dir / "dataset_split.json").write_text(
+        json.dumps(split_manifest, indent=2), encoding="utf-8")
     (output_dir / "adhoc.json").write_text(json.dumps({
         "source_cfg": str(project.cfg),
         "source_data": str(project.data),

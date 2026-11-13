@@ -1,4 +1,4 @@
-"""Existing Darknet projects must retain their architecture and split."""
+"""Ad hoc projects preserve supplied lists unless an explicit split is requested."""
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import argparse
@@ -8,12 +8,15 @@ import importlib.util
 import json
 import os
 import shlex
+import shutil
 import types
 import unittest
 import zipfile
 from unittest.mock import Mock, patch
 
-from yolobattle.model_training.adhoc import load_adhoc_profile, prepare_adhoc
+from yolobattle.model_training.adhoc import (
+    load_adhoc_profile, prepare_adhoc, prepare_adhoc_ultralytics,
+)
 
 
 CFG = """# architecture and optimizer settings must survive verbatim
@@ -76,6 +79,76 @@ class AdhocTest(unittest.TestCase):
         self.assertEqual(before, {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()})
         self.assertTrue(profile.darknet_project.letter_box)
         self.assertIsNone(profile.darknet_project.weights)
+
+    def test_heldout_split_is_stable_across_mounts_backends_and_list_order(self):
+        source_ids = [f"Set 01/image_{index:02d}.jpg" for index in range(10)]
+        for image_id in source_ids:
+            (self.root / image_id).touch()
+        source_list = self.root / "hand_train.txt"
+        source_list.write_text("\n".join(reversed(source_ids)) + "\n" + source_ids[0] + "\n")
+        # The old validation list is deliberately ignored in held-out mode.
+        (self.root / "hand_valid.txt").write_text("/missing/old-validation.jpg\n")
+        before = {p.relative_to(self.root): p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+
+        darknet = self.load(split_fraction=.20, split_seed=9001)
+        ultra = self.load(backend="ultralytics", split_fraction=.20, split_seed=9001)
+        train_ids = {Path(p).relative_to(self.root.resolve()).as_posix()
+                     for p in darknet.darknet_project.train}
+        valid_ids = {Path(p).relative_to(self.root.resolve()).as_posix()
+                     for p in darknet.darknet_project.valid}
+        self.assertEqual((len(train_ids), len(valid_ids)), (8, 2))
+        self.assertFalse(train_ids & valid_ids)
+        self.assertEqual(train_ids | valid_ids, set(source_ids))
+        self.assertEqual(darknet.val_fracs, (.20,))
+        self.assertEqual(darknet.darknet_project.split_manifest,
+                         ultra.darknet_project.split_manifest)
+
+        darknet_out = self.out / "darknet"
+        ultra_out = self.out / "ultra"
+        prepare_adhoc(darknet, darknet_out)
+        prepare_adhoc_ultralytics(ultra, ultra_out)
+        self.assertEqual((darknet_out / "dataset_split.json").read_bytes(),
+                         (ultra_out / "dataset_split.json").read_bytes())
+        self.assertEqual((darknet_out / "train.txt").read_text(),
+                         (ultra_out / "train.txt").read_text())
+        self.assertEqual((darknet_out / "valid.txt").read_text(),
+                         (ultra_out / "valid.txt").read_text())
+        manifest = json.loads((darknet_out / "dataset_split.json").read_text())
+        self.assertEqual((manifest["seed"], manifest["requested_val_fraction"]), (9001, .20))
+        self.assertEqual(manifest["counts"], {"train_total": 8, "valid_total": 2})
+        self.assertEqual(before, {p.relative_to(self.root): p.read_bytes()
+                                  for p in self.root.rglob("*") if p.is_file()})
+
+        source_list.write_text("\n".join(source_ids) + "\n")
+        reordered = self.load(split_fraction=.20, split_seed=9001)
+        self.assertEqual(reordered.darknet_project.split_manifest["valid_images_sha256"],
+                         manifest["valid_images_sha256"])
+        self.assertEqual(reordered.darknet_project.valid, darknet.darknet_project.valid)
+
+        other_root = Path(self.temporary.name) / "moved dataset"
+        shutil.copytree(self.root, other_root)
+        moved = load_adhoc_profile(str(other_root), split_fraction=.20, split_seed=9001)
+        self.assertEqual(moved.darknet_project.split_manifest["valid_images_sha256"],
+                         manifest["valid_images_sha256"])
+        self.assertEqual({Path(p).relative_to(other_root.resolve()).as_posix()
+                          for p in moved.darknet_project.valid}, valid_ids)
+
+    def test_heldout_split_accepts_missing_original_validation_list(self):
+        (self.root / "hand_valid.txt").unlink()
+        data = self.root / "hand.data"
+        data.write_text(data.read_text().replace("valid=hand_valid.txt\n", ""))
+        profile = self.load(split_fraction=.20)
+        self.assertEqual(profile.darknet_project.split_manifest["seed"], 9001)
+        self.assertEqual(len(profile.darknet_project.valid), 1)
+        with self.assertRaisesRegex(ValueError, "missing valid"):
+            self.load()
+
+    def test_heldout_split_rejects_images_outside_dataset_root(self):
+        external = Path(self.temporary.name) / "external.jpg"
+        external.touch()
+        (self.root / "hand_train.txt").write_text(f"{external}\nSet 01/one.jpg\n")
+        with self.assertRaisesRegex(ValueError, "inside the ad hoc dataset folder"):
+            self.load(split_fraction=.20)
 
     def test_ambiguous_cfg_requires_selection(self):
         (self.root / "second.cfg").write_text(CFG)
@@ -379,6 +452,28 @@ class AdhocTest(unittest.TestCase):
         for extra in (("--profile", "LegoGearsDarknetBenchmark"),
                       ("--custom-profile", "custom"),
                       ("--iterations", "100"), ("--val-frac", ".2")):
+            with self.subTest(extra=extra):
+                code, namespace = self.run_cli("--adhoc", str(self.root), *extra)
+                self.assertEqual(code, 2)
+                namespace["run_once"].assert_not_called()
+
+    def test_cli_heldout_split_is_explicit_and_routed_to_both_backends(self):
+        for backend in ("darknet", "ultralytics"):
+            with self.subTest(backend=backend):
+                code, namespace = self.run_cli(
+                    "--adhoc", str(self.root), "--adhoc-backend", backend,
+                    "--adhoc-split", "heldout", "--val-frac", ".2", "--split-seed", "42",
+                )
+                self.assertEqual(code, 0)
+                profile = namespace["run_once"].call_args.kwargs["p"]
+                self.assertEqual(profile.val_fracs, (.2,))
+                self.assertEqual(profile.darknet_project.split_manifest["seed"], 42)
+                self.assertFalse(set(profile.darknet_project.train) &
+                                 set(profile.darknet_project.valid))
+        for extra in (("--adhoc-split", "heldout"),
+                      ("--split-seed", "42"),
+                      ("--adhoc-split", "heldout", "--val-frac", "1"),
+                      ("--adhoc-split", "heldout", "--val-frac", ".2", "--split-seed", "-1")):
             with self.subTest(extra=extra):
                 code, namespace = self.run_cli("--adhoc", str(self.root), *extra)
                 self.assertEqual(code, 2)
