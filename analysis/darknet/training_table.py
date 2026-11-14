@@ -96,19 +96,19 @@ def parse_gpu_indices_from_csv_row(row: pd.Series) -> Optional[List[int]]:
     return None
 
 
-def parse_max_vram_from_log(log_path: Path, *, gpu_indices: Optional[List[int]] = None) -> Optional[float]:
+def parse_max_vram_from_gpu_stats(gpu_stats_path: Path, *, gpu_indices: Optional[List[int]] = None) -> Optional[float]:
     """
-    Parse mylogfile.log (CSV format) to find the maximum vram_mem_used value in MiB.
+    Parse a GPU statistics log (CSV format) for maximum VRAM use in MiB.
 
     If gpu_indices is provided (e.g., [3]), ONLY consider columns like:
       "3 vram_mem_used MiB"
     If None, falls back to considering all "vram_mem_used MiB" columns.
     """
-    if not log_path.exists():
+    if not gpu_stats_path.exists():
         return None
 
     try:
-        with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+        with gpu_stats_path.open("r", encoding="utf-8", errors="ignore") as f:
             reader = csv.DictReader(f)
             if not reader.fieldnames:
                 return None
@@ -134,19 +134,19 @@ def parse_max_vram_from_log(log_path: Path, *, gpu_indices: Optional[List[int]] 
 
             return max_vram if max_vram > 0 else None
     except Exception as e:
-        print(f"Error reading {log_path}: {e}")
+        print(f"Error reading {gpu_stats_path}: {e}")
         return None
 
 
-def infer_gpu_indices_from_log_by_peak_vram(log_path: Path) -> Optional[List[int]]:
+def infer_gpu_indices_from_gpu_stats_by_peak_vram(gpu_stats_path: Path) -> Optional[List[int]]:
     """
     Fallback inference: choose the GPU index with the highest peak VRAM usage.
     Useful when the benchmark CSV does not reliably store GPU indices.
     """
-    if not log_path.exists():
+    if not gpu_stats_path.exists():
         return None
 
-    with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+    with gpu_stats_path.open("r", encoding="utf-8", errors="ignore") as f:
         reader = csv.DictReader(f)
         if not reader.fieldnames:
             return None
@@ -170,6 +170,23 @@ def infer_gpu_indices_from_log_by_peak_vram(log_path: Path) -> Optional[List[int
 
         best_idx, best_val = max(max_by_idx.items(), key=lambda kv: kv[1])
         return [best_idx] if best_val > 0 else None
+
+
+def find_gpu_stats_log(run_dir: Path) -> Optional[Path]:
+    """Find the current log, or recognize an older GPU log by its CSV header."""
+    preferred = run_dir / "gpu_stats.log"
+    if preferred.is_file():
+        return preferred
+
+    for candidate in sorted(run_dir.glob("*.log")):
+        try:
+            with candidate.open("r", encoding="utf-8", errors="ignore", newline="") as stream:
+                header = next(csv.reader(stream), [])
+        except (OSError, csv.Error):
+            continue
+        if any(re.fullmatch(r"\d+\s+vram_mem_used\s+MiB", name.strip()) for name in header):
+            return candidate
+    return None
 
 
 def iqr_outlier_indices(xs: List[float], *, k: float = 1.5) -> List[int]:
@@ -556,8 +573,8 @@ def main() -> None:
                 idxs = parse_gpu_indices_from_csv_row(row)
                 key_to_gpu_idxs[key] = tuple(idxs) if idxs else None
 
-        log_path = csv_path.parent / "mylogfile.log"
-        if keys_in_this_csv and log_path.exists():
+        gpu_stats_path = find_gpu_stats_log(csv_path.parent)
+        if keys_in_this_csv and gpu_stats_path is not None:
             cache: Dict[Optional[Tuple[int, ...]], Optional[float]] = {}
 
             for key in keys_in_this_csv:
@@ -565,12 +582,12 @@ def main() -> None:
                 idxs_tup = key_to_gpu_idxs.get(key)
 
                 if idxs_tup is None:
-                    inferred = infer_gpu_indices_from_log_by_peak_vram(log_path)
+                    inferred = infer_gpu_indices_from_gpu_stats_by_peak_vram(gpu_stats_path)
                     idxs_tup = tuple(inferred) if inferred else None
 
                 if idxs_tup not in cache:
                     idxs_list = list(idxs_tup) if idxs_tup else None
-                    cache[idxs_tup] = parse_max_vram_from_log(log_path, gpu_indices=idxs_list)
+                    cache[idxs_tup] = parse_max_vram_from_gpu_stats(gpu_stats_path, gpu_indices=idxs_list)
 
                 max_vram = cache[idxs_tup]
                 if max_vram is not None:

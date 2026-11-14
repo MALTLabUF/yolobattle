@@ -341,7 +341,7 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
     print(f"[out] {output_dir}")
 
     # GPU watcher (host-indexed for nvidia-smi)
-    watch_log = os.path.join(output_dir, "mylogfile.log")
+    gpu_stats_path = os.path.join(output_dir, "gpu_stats.log")
     stop_evt = Event()
     t = None
 
@@ -361,16 +361,16 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
     try:
         if gpu.count > 0:
             t = Thread(target=gpu.watch, kwargs={
-                "logfile": watch_log, "delay": 1.0, "dense": True,
+                "logfile": gpu_stats_path, "delay": 1.0, "dense": True,
                 "gpu": watch_indices,  # None => watch all; else host indices
                 "install_signal_handler": False, "stop_event": stop_evt,
             })
             t.daemon = True
             t.start()
             if watch_indices:
-                print(f"[gpuwatch] -> {watch_log} (host idx: {','.join(map(str, watch_indices))} for logical {','.join(map(str, indices))})")
+                print(f"[gpuwatch] -> {gpu_stats_path} (host idx: {','.join(map(str, watch_indices))} for logical {','.join(map(str, indices))})")
             else:
-                print(f"[gpuwatch] -> {watch_log} (watching all)")
+                print(f"[gpuwatch] -> {gpu_stats_path} (watching all)")
         else:
             print("[gpuwatch] no GPUs visible")
     except Exception as e:
@@ -397,7 +397,7 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
             except Exception as e:
                 print(f"[gpuwatch] stop err: {e}")
 
-    peak_vram_mib = peak_gpu_vram_used_mib(watch_log, watch_indices)
+    peak_vram_mib = peak_gpu_vram_used_mib(gpu_stats_path, watch_indices)
     if peak_vram_mib is not None:
         print(f"[gpuwatch] peak VRAM used: {peak_vram_mib} MiB")
 

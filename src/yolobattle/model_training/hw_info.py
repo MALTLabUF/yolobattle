@@ -329,7 +329,7 @@ def gpu_inventory(cm_gpu):
     return names, vram
 
 
-def peak_gpu_vram_used_mib(logfile: str | Path, gpu_ids: list[int] | None) -> int | None:
+def peak_gpu_vram_used_mib(gpu_stats_path: str | Path, gpu_ids: list[int] | None) -> int | None:
     """Return the largest sampled VRAM use for the selected nvidia-smi GPUs."""
     if not gpu_ids:
         return None
@@ -337,7 +337,7 @@ def peak_gpu_vram_used_mib(logfile: str | Path, gpu_ids: list[int] | None) -> in
     selected = set(gpu_ids)
     peak = None
     try:
-        with Path(logfile).open(encoding="utf-8", errors="replace", newline="") as stream:
+        with Path(gpu_stats_path).open(encoding="utf-8", errors="replace", newline="") as stream:
             rows = csv.reader(stream)
             header = next(rows, [])
             columns = {}
