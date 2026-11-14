@@ -239,6 +239,10 @@ letter datasets where mirroring changes the class. Both options accept a
 probability from 0 to 1; omitting one keeps the Ultralytics default. They also
 work with named Ultralytics profiles and Slurm batch experiments. A color
 preset does not change either flip probability.
+Use `--mosaic 0` to disable Ultralytics mosaic augmentation, or set a
+probability between 0 and 1. In Slurm batches, set `mosaic: [0]`; omitting it
+keeps the Ultralytics default or the selected color preset's mosaic setting.
+An explicit `--mosaic` value overrides the color preset's mosaic setting.
 Rebuild the Ultralytics SIF from this source to use these arguments with a
 direct `singularity run` command.
 
@@ -255,7 +259,7 @@ SINGULARITYENV_APPTAINER_ENVIRONMENT=1 singularity run --nv \
   --adhoc /datasets/handWM6 \
   --adhoc-backend ultralytics \
   --ultra-model yolo11n.yaml \
-  --fliplr 0 --flipud 0
+  --fliplr 0 --flipud 0 --mosaic 0
 ```
 
 Relative paths resolve beside the referring file, then relative to the project

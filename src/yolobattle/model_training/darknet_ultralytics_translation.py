@@ -179,6 +179,8 @@ def _ultra_color_args_from_profile(profile) -> str:
         return ""
 
     key = str(preset).strip().lower()
+    # An explicit mosaic setting takes precedence over the color preset.
+    use_preset_mosaic = getattr(profile, "ultra_mosaic", None) is None
 
     if key == "preserve":
         # Strict color preservation: no HSV jitter and no heavy mixing
@@ -186,7 +188,7 @@ def _ultra_color_args_from_profile(profile) -> str:
             "hsv_h=0.0 "
             "hsv_s=0.0 "
             "hsv_v=0.0 "
-            "mosaic=0.0 "
+            f"{'mosaic=0.0 ' if use_preset_mosaic else ''}"
             "mixup=0.0 "
             "copy_paste=0.0 "
         )
@@ -197,7 +199,7 @@ def _ultra_color_args_from_profile(profile) -> str:
             "hsv_h=0.0 "
             "hsv_s=0.1 "
             "hsv_v=0.1 "
-            "mosaic=0.5 "
+            f"{'mosaic=0.5 ' if use_preset_mosaic else ''}"
             "mixup=0.0 "
             "copy_paste=0.0 "
         )
@@ -247,16 +249,17 @@ def build_ultralytics_cmd(*, profile, device_indices: list[int], run_dir: str) -
         workers_arg = f"workers={workers} "
 
     
-    # Color presets do not control geometric flips.
+    # Color presets do not control geometric flips. Explicit mosaic overrides
+    # take precedence over any mosaic value supplied by a color preset.
     color_aug = _ultra_color_args_from_profile(profile)
-    flip_aug = ""
-    for name in ("fliplr", "flipud"):
-        value = getattr(profile, name, None)
+    augmentation_args = ""
+    for name, attribute in (("fliplr", "fliplr"), ("flipud", "flipud"), ("mosaic", "ultra_mosaic")):
+        value = getattr(profile, attribute, None)
         if value is not None:
             probability = float(value)
             if not 0.0 <= probability <= 1.0:
                 raise ValueError(f"{name} must be between 0 and 1")
-            flip_aug += f"{name}={probability} "
+            augmentation_args += f"{name}={probability} "
 
     core = (
         f"task=detect mode=train "
@@ -271,7 +274,7 @@ def build_ultralytics_cmd(*, profile, device_indices: list[int], run_dir: str) -
         f"{seed_arg}{det_arg}{workers_arg}"
         f"cache=False "
         f"{color_aug}"
-        f"{flip_aug}"
+        f"{augmentation_args}"
     )
 
     return (

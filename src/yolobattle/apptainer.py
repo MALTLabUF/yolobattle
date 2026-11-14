@@ -384,6 +384,7 @@ def _generate_slurm_batch(args: argparse.Namespace, backend: str, root: Path) ->
         "color_preset": None,
         "fliplr": None,
         "flipud": None,
+        "mosaic": None,
         "imgsz": None,
         "repeat": None,
     }

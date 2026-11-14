@@ -38,9 +38,11 @@ class TrainProfile:
     color_preset: Optional[str] = None
     color_presets: Tuple[Optional[str], ...] = (None,)
     tag_color_preset: bool = False
-    # Ultralytics flip probabilities. None keeps the installed defaults.
+    # Ultralytics augmentation probabilities. None keeps the installed defaults
+    # or the selected color preset's override.
     fliplr: float | None = None
     flipud: float | None = None
+    ultra_mosaic: float | None = None
     map_thresh: float | None = None
     iou_thresh: float | None = None
     map_points: int | None = None

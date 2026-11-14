@@ -439,6 +439,9 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
         "source cfg" if p.backend == "darknet" and p.cfg_source
         else (p.color_preset if p.color_preset is not None else "off")
     )
+    preset_mosaic = {"preserve": 0.0, "light": 0.5}.get(
+        (p.color_preset or "").strip().lower()
+    )
 
     # defaults so names exist even on failure
     coco_ap5095 = coco_ap50 = coco_ap75 = None
@@ -607,6 +610,10 @@ def run_once(*, p: TrainProfile, template: Optional[str], out_root: str,
         "Ultralytics flipud": (
             p.flipud if p.flipud is not None else "default"
         ) if p.backend == "ultralytics" else None,
+        "Ultralytics mosaic": (
+            p.ultra_mosaic if p.ultra_mosaic is not None
+            else preset_mosaic if preset_mosaic is not None else "default"
+        ) if p.backend == "ultralytics" else None,
 
         # Seeds (explicit provenance)
         "Split Seed": (adhoc_split_manifest["seed"] if adhoc_split_manifest
@@ -723,6 +730,8 @@ if __name__ == "__main__":
                     help="Ultralytics horizontal flip probability, 0 to 1 (0 disables it)")
     ap.add_argument("--flipud", type=float, default=None,
                     help="Ultralytics vertical flip probability, 0 to 1 (0 disables it)")
+    ap.add_argument("--mosaic", type=float, default=None,
+                    help="Ultralytics mosaic probability, 0 to 1 (0 disables it)")
     ap.add_argument("--ultra-model", default=None, help="Ultralytics model override")
     ap.add_argument("--imgsz", type=int, default=None,
                     help="Ultralytics square training size; positive multiple of 32")
@@ -845,15 +854,15 @@ if __name__ == "__main__":
         p = replace(p, color_preset=args.color_preset, color_presets=(args.color_preset,))
         overrides_used = True
 
-    if args.fliplr is not None or args.flipud is not None:
+    if any(getattr(args, name) is not None for name in ("fliplr", "flipud", "mosaic")):
         if p.backend != "ultralytics":
-            ap.error("--fliplr and --flipud are only supported by Ultralytics")
-        for name in ("fliplr", "flipud"):
+            ap.error("--fliplr, --flipud, and --mosaic are only supported by Ultralytics")
+        for name in ("fliplr", "flipud", "mosaic"):
             value = getattr(args, name)
             if value is not None:
                 if not 0.0 <= value <= 1.0:
                     ap.error(f"--{name} must be between 0 and 1")
-                p = replace(p, **{name: value})
+                p = replace(p, **{"ultra_mosaic" if name == "mosaic" else name: value})
         overrides_used = True
 
     if args.ultra_model is not None:

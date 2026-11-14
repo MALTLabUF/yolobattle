@@ -28,6 +28,7 @@ IMGSZ="{experiment.imgsz}"
 COLOR_PRESET="{experiment.color_preset}"
 FLIPLR="{experiment.fliplr}"
 FLIPUD="{experiment.flipud}"
+MOSAIC="{experiment.mosaic}"
 DATASET_ROOT="{system.dataset_root}"
 EE_REPEAT="{experiment.repeat}"
 
@@ -59,6 +60,10 @@ fi
 
 if [[ -n "$FLIPUD" && "$FLIPUD" != "None" && "$FLIPUD" != "null" ]]; then
   TRAIN_ARGS+=(--flipud "$FLIPUD")
+fi
+
+if [[ -n "$MOSAIC" && "$MOSAIC" != "None" && "$MOSAIC" != "null" ]]; then
+  TRAIN_ARGS+=(--mosaic "$MOSAIC")
 fi
 
 if [[ -n "$DATASET_ROOT" && "$DATASET_ROOT" != "None" && "$DATASET_ROOT" != "null" ]]; then

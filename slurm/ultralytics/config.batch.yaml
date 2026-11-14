@@ -11,6 +11,7 @@ experiment:
   color_preset: [null]
   fliplr: [null]
   flipud: [null]
+  mosaic: [null]
   repeat: [1]
 
 ee:
