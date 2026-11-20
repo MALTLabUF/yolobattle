@@ -411,14 +411,17 @@ yolobattle apptainer run --image "$PWD/yolobattle-darknet.sif" --profile <PROFIL
 
 To build one self-contained offline image for the Lego Gears Darknet profiles,
 set the `include_legogears_offline` workflow input to `true`. The workflow
-downloads and packages the Lego Gears archive, the `yolov4-tiny`,
-`yolov4-custom`, and `yolov7-tiny` cfg templates, and a Git bundle for the
-selected Darknet ref and commit. The `yolov4-custom` template can also generate
+downloads and packages the Lego Gears archive, every Darknet cfg listed in
+`TEMPLATE_URLS` (including YOLOv3, YOLOv4, and YOLOv7), and a Git bundle for
+the selected Darknet ref and commit. An ad hoc dataset can select one of these
+bundled architectures with `--template yolov3`, `--template yolov4`, or
+`--template yolov7`. The `yolov4-custom` template can also generate
 a cfg for a dataset handled by a Darknet profile when selected with
 `--template yolov4-custom`. The source is still compiled when the container
 starts, so the build can use the GPU visible on the HPC node. The resulting
 artifact contains `yolobattle-darknet-legogears-offline.sif` and its SHA-256
-checksum.
+checksum. An older SIF still has its original template set; rebuild and
+download the offline SIF to get templates added later.
 
 Verify and run that image with:
 

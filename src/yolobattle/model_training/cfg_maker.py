@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-cfg_maker.py — Generate a Darknet .cfg from the yolov7-tiny template (downloaded in-memory),
-ALWAYS recalculating anchors from your dataset labels, using a .data file.
+cfg_maker.py — Generate a Darknet .cfg from any registered template,
+recalculating anchors from dataset labels in a .data file.
 
 Example:
 python cfg_maker.py \
@@ -635,12 +635,12 @@ def main():
                     help="also write counters_per_class=<csv> into [net]")
 
     ap.add_argument("--template",
-                    choices=["yolov7-tiny", "yolov4-tiny", "yolov4-tiny-3l", "yolov7", "yolov4", "yolov4-custom"],
+                    choices=sorted(TEMPLATE_URLS),
                     default="yolov4-tiny")
 
     ap.add_argument(
         "--anchor-clusters", type=int, default=None,
-        help="total anchors to compute (defaults: 9 for yolov7/yolov7-tiny/yolov4/yolov4-custom/yolov4-tiny-3l, 6 for yolov4-tiny)"
+        help="total anchors to compute (default: inferred from the template's detection heads)"
     )
 
     args = ap.parse_args()
@@ -649,17 +649,12 @@ def main():
     if args.width < 32 or args.height < 32 or (args.width % 32) or (args.height % 32):
         sys.exit("width and height must be multiples of 32 and >= 32.")
 
-    # Decide template + default anchor count
+    # The transform picks the anchor count from the selected template's
+    # detection heads unless the caller specifies an override.
     template_name = args.template
     template_text = fetch_template_text(pick_template_url(template_name))
-    anchor_clusters = (
-        9 if (args.anchor_clusters is None and template_name in ["yolov7-tiny", "yolov4-tiny-3l", "yolov7", "yolov4", "yolov4-custom"])
-        else 6 if (args.anchor_clusters is None and template_name == "yolov4-tiny")
-        else args.anchor_clusters
-    )
-
-
-    if anchor_clusters is None or anchor_clusters <= 1:
+    anchor_clusters = args.anchor_clusters
+    if anchor_clusters is not None and anchor_clusters <= 1:
         sys.exit("--anchor-clusters must be > 1 (or omit it to use the template-based default)")
 
     # Parse .data and gather boxes

@@ -260,7 +260,7 @@ def _run_image(args: argparse.Namespace) -> None:
         raise SystemExit("Offline bundle mode is currently available for the Darknet Lego Gears image only.")
     if args.offline and not adhoc and args.profile not in {"LegoGearsDarknetBenchmark", "LegoGearsDarknet"}:
         raise SystemExit(
-            "This offline SIF contains the Lego Gears dataset and Darknet tiny cfg templates; "
+            "This offline SIF contains the Lego Gears dataset and Darknet cfg templates; "
             "use profile LegoGearsDarknetBenchmark, LegoGearsDarknet, or --adhoc with local data."
         )
     if args.offline and args.build:

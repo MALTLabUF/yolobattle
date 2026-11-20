@@ -56,18 +56,25 @@ jobs:
           printf '%s  %s\n' "$dataset_sha256" "$offline_dir/datasets/legogears_2_dataset.zip" \
             | sha256sum --check
 
-          curl --fail --location --retry 3 \
-            "https://raw.githubusercontent.com/hank-ai/darknet/master/cfg/yolov4-tiny.cfg" \
-            --output "$offline_dir/darknet/cfg/yolov4-tiny.cfg"
-          curl --fail --location --retry 3 \
-            "https://raw.githubusercontent.com/hank-ai/darknet/master/cfg/yolov4-tiny-3l.cfg" \
-            --output "$offline_dir/darknet/cfg/yolov4-tiny-3l.cfg"
-          curl --fail --location --retry 3 \
-            "https://raw.githubusercontent.com/hank-ai/darknet/master/cfg/yolov4-custom.cfg" \
-            --output "$offline_dir/darknet/cfg/yolov4-custom.cfg"
-          curl --fail --location --retry 3 \
-            "https://raw.githubusercontent.com/hank-ai/darknet/master/cfg/yolov7-tiny.cfg" \
-            --output "$offline_dir/darknet/cfg/yolov7-tiny.cfg"
+          # Bundle every cfg accepted by --template, using the URL basename
+          # that cfg_maker.py looks up when the container runs offline.
+          cfg_urls="${RUNNER_TEMP}/darknet-cfg-urls.tsv"
+          PYTHONPATH="${GITHUB_WORKSPACE}/src" python3 - > "$cfg_urls" <<'PY'
+          from pathlib import PurePosixPath
+          from urllib.parse import urlparse
+          from yolobattle.model_training.cfg_maker import TEMPLATE_URLS
+
+          names = [PurePosixPath(urlparse(url).path).name for url in TEMPLATE_URLS.values()]
+          if not names or len(names) != len(set(names)) or any(not name.endswith(".cfg") for name in names):
+              raise SystemExit("Darknet template URLs must have distinct .cfg filenames")
+          for name, url in zip(names, TEMPLATE_URLS.values()):
+              print(f"{name}\t{url}")
+          PY
+          while IFS=$'\t' read -r name url; do
+            curl --fail --location --retry 3 "$url" \
+              --output "$offline_dir/darknet/cfg/$name"
+            test -s "$offline_dir/darknet/cfg/$name"
+          done < "$cfg_urls"
 
           source_checkout="${RUNNER_TEMP}/yolobattle-darknet-source"
           git clone https://codeberg.org/jpfleischer/darknet.git "$source_checkout"
@@ -90,10 +97,20 @@ jobs:
           printf '%s\n' "$darknet_commit" > "$offline_dir/darknet/darknet-commit.txt"
           rm -rf "$source_checkout"
 
-          TARGET_REF="$TARGET_REF" DARKNET_COMMIT="$darknet_commit" python3 - "$offline_dir/manifest.json" <<'PY'
+          PYTHONPATH="${GITHUB_WORKSPACE}/src" TARGET_REF="$TARGET_REF" DARKNET_COMMIT="$darknet_commit" \
+            python3 - "$offline_dir/manifest.json" "$offline_dir/darknet/cfg" <<'PY'
           import json
           import os
           import sys
+          from pathlib import Path, PurePosixPath
+          from urllib.parse import urlparse
+          from yolobattle.model_training.cfg_maker import TEMPLATE_URLS
+
+          cfg_dir = Path(sys.argv[2])
+          expected = sorted(PurePosixPath(urlparse(url).path).name for url in TEMPLATE_URLS.values())
+          actual = sorted(path.name for path in cfg_dir.glob("*.cfg"))
+          if actual != expected or any(not (cfg_dir / name).stat().st_size for name in expected):
+              raise SystemExit(f"Bundled cfgs differ from TEMPLATE_URLS: expected {expected}, found {actual}")
 
           manifest = {
               "profiles": ["LegoGearsDarknetBenchmark", "LegoGearsDarknet"],
@@ -101,7 +118,7 @@ jobs:
               "darknet_commit": os.environ["DARKNET_COMMIT"],
               "dataset_archive": "datasets/legogears_2_dataset.zip",
               "dataset_sha256": "126980d3e43986bbd3d785ac16f6430e9bf3b726e65a30574bb3c9ba06a4462e",
-              "darknet_cfg_templates": ["yolov4-tiny.cfg", "yolov4-tiny-3l.cfg", "yolov4-custom.cfg", "yolov7-tiny.cfg"],
+              "darknet_cfg_templates": expected,
           }
           with open(sys.argv[1], "w", encoding="utf-8") as output:
               json.dump(manifest, output, indent=2)
@@ -135,10 +152,22 @@ jobs:
               'cd /opt/yolobattle/offline-assets && sha256sum --check SHA256SUMS'
             apptainer exec "$IMAGE_NAME" test -s \
               /opt/yolobattle/offline-assets/manifest.json
-            apptainer exec "$IMAGE_NAME" test -s \
-              /opt/yolobattle/offline-assets/darknet/cfg/yolov4-custom.cfg
-            apptainer exec "$IMAGE_NAME" test -s \
-              /opt/yolobattle/offline-assets/darknet/cfg/yolov4-tiny-3l.cfg
+            apptainer exec "$IMAGE_NAME" env PYTHONPATH=/opt/app/src python3 - <<'PY'
+          import json
+          from pathlib import Path, PurePosixPath
+          from urllib.parse import urlparse
+          from yolobattle.model_training.cfg_maker import TEMPLATE_URLS
+
+          bundle = Path("/opt/yolobattle/offline-assets")
+          manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+          expected = sorted(PurePosixPath(urlparse(url).path).name for url in TEMPLATE_URLS.values())
+          actual = sorted(manifest["darknet_cfg_templates"])
+          if actual != expected:
+              raise SystemExit(f"SIF template manifest differs from TEMPLATE_URLS: {actual} != {expected}")
+          for name in expected:
+              if not (bundle / "darknet" / "cfg" / name).is_file():
+                  raise SystemExit(f"Missing bundled Darknet template: {name}")
+          PY
             apptainer exec "$IMAGE_NAME" bash -lc '
               set -euo pipefail
               bundle=/opt/yolobattle/offline-assets/darknet/darknet-repository.bundle
