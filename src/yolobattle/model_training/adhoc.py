@@ -35,22 +35,26 @@ def _image_ids_sha256(image_ids: list[str]) -> str:
     return hashlib.sha256(("\n".join(sorted(image_ids)) + "\n").encode("utf-8")).hexdigest()
 
 
-def _heldout_split(root: Path, source_train: tuple[str, ...], fraction: float,
+def _heldout_split(root: Path, source_train: tuple[str, ...],
+                   source_valid: tuple[str, ...], fraction: float,
                    seed: int) -> tuple[tuple[str, ...], tuple[str, ...], dict]:
-    """Select a stable, disjoint split from the source train list only."""
+    """Select a stable, disjoint split from the union of the source lists."""
     images_by_id = {}
-    for image_name in source_train:
-        image = Path(image_name).resolve()
-        try:
-            image_id = image.relative_to(root).as_posix()
-        except ValueError:
-            raise ValueError(
-                f"Held-out splitting requires images inside the ad hoc dataset folder: {image}"
-            ) from None
-        images_by_id[image_id] = str(image)
+    source_ids = {"train": set(), "valid": set()}
+    for list_name, source_images in (("train", source_train), ("valid", source_valid)):
+        for image_name in source_images:
+            image = Path(image_name).resolve()
+            try:
+                image_id = image.relative_to(root).as_posix()
+            except ValueError:
+                raise ValueError(
+                    f"Held-out splitting requires images inside the ad hoc dataset folder: {image}"
+                ) from None
+            source_ids[list_name].add(image_id)
+            images_by_id[image_id] = str(image)
     image_ids = sorted(images_by_id)
     if len(image_ids) < 2:
-        raise ValueError("Held-out splitting requires at least two distinct training images")
+        raise ValueError("Held-out splitting requires at least two distinct source images")
     valid_count = min(len(image_ids) - 1, max(1, round(len(image_ids) * fraction)))
     ranked = sorted(image_ids, key=lambda image_id: (
         hashlib.sha256(f"{seed}\0{image_id}".encode("utf-8")).digest(), image_id
@@ -59,14 +63,20 @@ def _heldout_split(root: Path, source_train: tuple[str, ...], fraction: float,
     valid_set = set(valid_ids)
     train_ids = [image_id for image_id in image_ids if image_id not in valid_set]
     manifest = {
-        "source": "adhoc_train_heldout",
+        "source": "adhoc_union_heldout" if source_valid else "adhoc_train_heldout",
         "algorithm": "sha256-seed-relative-path-v1",
         "seed": seed,
         "requested_val_fraction": fraction,
         "actual_val_fraction": len(valid_ids) / len(image_ids),
         "source_train_total": len(source_train),
+        "source_valid_total": len(source_valid),
         "source_unique_images": len(image_ids),
         "source_images_sha256": _image_ids_sha256(image_ids),
+        "source_list_unique_images": {
+            "train": len(source_ids["train"]),
+            "valid": len(source_ids["valid"]),
+            "overlap": len(source_ids["train"] & source_ids["valid"]),
+        },
         "train_images_sha256": _image_ids_sha256(train_ids),
         "valid_images_sha256": _image_ids_sha256(valid_ids),
         "counts": {"train_total": len(train_ids), "valid_total": len(valid_ids)},
@@ -294,6 +304,8 @@ def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None 
     for key in required_fields:
         if not values.get(key):
             raise ValueError(f"{data_path} is missing {key}=")
+    if split_fraction is not None and "valid" in values and not values["valid"]:
+        raise ValueError(f"{data_path} has empty valid=")
     names_path = resolve_file(values["names"], data_path.parent, metadata=True)
     names = tuple(_lines(names_path))
     try:
@@ -311,8 +323,8 @@ def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None 
             raise ValueError("Class counts must agree in .names, .data, and every [yolo] head")
 
     # Resolve metadata before images so relocated source paths can establish
-    # their old root. A generated split uses the source train list only.
-    list_keys = ("train",) if split_fraction is not None else ("train", "valid")
+    # their old root. A generated split uses both lists when valid= is present.
+    list_keys = ("train", "valid") if split_fraction is None or values.get("valid") else ("train",)
     lists = {key: resolve_file(values[key], data_path.parent, metadata=True) for key in list_keys}
     inferred_prefixes = tuple(sorted(inferred, key=len, reverse=True))
     anchors.update(PurePosixPath(old).name for old in inferred)
@@ -325,10 +337,10 @@ def load_adhoc_profile(folder: str, *, cfg: str | None = None, data: str | None 
         return images
 
     train = read_list("train")
-    valid = read_list("valid") if split_fraction is None else ()
+    valid = read_list("valid") if "valid" in lists else ()
     split_manifest = None
     if split_fraction is not None:
-        train, valid, split_manifest = _heldout_split(root, train, split_fraction, split_seed)
+        train, valid, split_manifest = _heldout_split(root, train, valid, split_fraction, split_seed)
     train_unique = set(train)
     valid_unique = set(valid)
     unique_images = train_unique | valid_unique

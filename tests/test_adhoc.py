@@ -82,12 +82,13 @@ class AdhocTest(unittest.TestCase):
 
     def test_heldout_split_is_stable_across_mounts_backends_and_list_order(self):
         source_ids = [f"Set 01/image_{index:02d}.jpg" for index in range(10)]
-        for image_id in source_ids:
+        valid_only_ids = [f"Set 01/valid_only_{index:02d}.jpg" for index in range(2)]
+        for image_id in source_ids + valid_only_ids:
             (self.root / image_id).touch()
         source_list = self.root / "hand_train.txt"
         source_list.write_text("\n".join(reversed(source_ids)) + "\n" + source_ids[0] + "\n")
-        # The old validation list is deliberately ignored in held-out mode.
-        (self.root / "hand_valid.txt").write_text("/missing/old-validation.jpg\n")
+        source_valid_list = self.root / "hand_valid.txt"
+        source_valid_list.write_text("\n".join((source_ids[0], *reversed(valid_only_ids), source_ids[0])) + "\n")
         before = {p.relative_to(self.root): p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
 
         darknet = self.load(split_fraction=.20, split_seed=9001)
@@ -96,9 +97,9 @@ class AdhocTest(unittest.TestCase):
                      for p in darknet.darknet_project.train}
         valid_ids = {Path(p).relative_to(self.root.resolve()).as_posix()
                      for p in darknet.darknet_project.valid}
-        self.assertEqual((len(train_ids), len(valid_ids)), (8, 2))
+        self.assertEqual((len(train_ids), len(valid_ids)), (10, 2))
         self.assertFalse(train_ids & valid_ids)
-        self.assertEqual(train_ids | valid_ids, set(source_ids))
+        self.assertEqual(train_ids | valid_ids, set(source_ids + valid_only_ids))
         self.assertEqual(darknet.val_fracs, (.20,))
         self.assertEqual(darknet.darknet_project.split_manifest,
                          ultra.darknet_project.split_manifest)
@@ -115,11 +116,17 @@ class AdhocTest(unittest.TestCase):
                          (ultra_out / "valid.txt").read_text())
         manifest = json.loads((darknet_out / "dataset_split.json").read_text())
         self.assertEqual((manifest["seed"], manifest["requested_val_fraction"]), (9001, .20))
-        self.assertEqual(manifest["counts"], {"train_total": 8, "valid_total": 2})
+        self.assertEqual(manifest["source"], "adhoc_union_heldout")
+        self.assertEqual((manifest["source_train_total"], manifest["source_valid_total"]), (11, 4))
+        self.assertEqual(manifest["source_unique_images"], 12)
+        self.assertEqual(manifest["source_list_unique_images"],
+                         {"train": 10, "valid": 3, "overlap": 1})
+        self.assertEqual(manifest["counts"], {"train_total": 10, "valid_total": 2})
         self.assertEqual(before, {p.relative_to(self.root): p.read_bytes()
                                   for p in self.root.rglob("*") if p.is_file()})
 
         source_list.write_text("\n".join(source_ids) + "\n")
+        source_valid_list.write_text("\n".join((*valid_only_ids, source_ids[0])) + "\n")
         reordered = self.load(split_fraction=.20, split_seed=9001)
         self.assertEqual(reordered.darknet_project.split_manifest["valid_images_sha256"],
                          manifest["valid_images_sha256"])
@@ -139,14 +146,36 @@ class AdhocTest(unittest.TestCase):
         data.write_text(data.read_text().replace("valid=hand_valid.txt\n", ""))
         profile = self.load(split_fraction=.20)
         self.assertEqual(profile.darknet_project.split_manifest["seed"], 9001)
+        self.assertEqual(profile.darknet_project.split_manifest["source"], "adhoc_train_heldout")
+        self.assertEqual(profile.darknet_project.split_manifest["source_valid_total"], 0)
         self.assertEqual(len(profile.darknet_project.valid), 1)
         with self.assertRaisesRegex(ValueError, "missing valid"):
             self.load()
+
+    def test_heldout_split_deduplicates_identical_source_lists(self):
+        (self.root / "hand_valid.txt").write_bytes((self.root / "hand_train.txt").read_bytes())
+        profile = self.load(split_fraction=.5, split_seed=42)
+        manifest = profile.darknet_project.split_manifest
+        self.assertEqual(manifest["source_unique_images"], 2)
+        self.assertEqual(manifest["source_list_unique_images"]["overlap"], 2)
+        self.assertEqual(manifest["counts"], {"train_total": 1, "valid_total": 1})
+
+    def test_heldout_split_reads_declared_validation_list(self):
+        (self.root / "hand_valid.txt").unlink()
+        with self.assertRaisesRegex(ValueError, "Cannot find 'hand_valid.txt'"):
+            self.load(split_fraction=.20)
 
     def test_heldout_split_rejects_images_outside_dataset_root(self):
         external = Path(self.temporary.name) / "external.jpg"
         external.touch()
         (self.root / "hand_train.txt").write_text(f"{external}\nSet 01/one.jpg\n")
+        with self.assertRaisesRegex(ValueError, "inside the ad hoc dataset folder"):
+            self.load(split_fraction=.20)
+
+    def test_heldout_split_rejects_validation_images_outside_dataset_root(self):
+        external = Path(self.temporary.name) / "external.jpg"
+        external.touch()
+        (self.root / "hand_valid.txt").write_text(f"{external}\n")
         with self.assertRaisesRegex(ValueError, "inside the ad hoc dataset folder"):
             self.load(split_fraction=.20)
 

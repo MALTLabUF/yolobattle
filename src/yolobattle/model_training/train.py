@@ -705,7 +705,7 @@ if __name__ == "__main__":
     adhoc_group.add_argument("--data-path", help="Select a .data file when the folder contains multiple files")
     adhoc_group.add_argument("--cfg-path", help="Select a .cfg file when the folder contains multiple files; with --template, inherit its size and batch/update budget")
     adhoc_group.add_argument("--adhoc-split", choices=("heldout",),
-                             help="Generate a disjoint validation split from the ad hoc train list")
+                             help="Generate a disjoint validation split from the union of ad hoc train and valid lists")
     adhoc_group.add_argument("--split-seed", type=int,
                              help="Seed for --adhoc-split heldout (default: 9001)")
 

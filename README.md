@@ -120,17 +120,20 @@ Source files are not modified. Checkpoints and the usual benchmark reports are
 written under `/outputs/adhoc_<folder>/...` in
 the container, or `artifacts/outputs/adhoc_<folder>/...` when run directly.
 
-To create a reproducible held-out validation set from the source `train` list,
-pass `--adhoc-split heldout --val-frac 0.20 --split-seed 9001`. This mode
-deduplicates the training images, ranks their dataset-relative paths by SHA-256
-with the seed, and assigns approximately 20% to validation. The original
-`valid` list is ignored; it may be absent. Both backends use the same generated
-lists. The run saves `train.txt`, `valid.txt`, and `dataset_split.json` with
-the requested and actual fractions, counts, seed, and hashes of the source and
-resulting image identifiers. Repeating the command with the same relative image
-paths and seed yields the same split, even under a different mount path.
+To create a reproducible held-out validation set from the union of the source
+`train` and `valid` lists, pass
+`--adhoc-split heldout --val-frac 0.20 --split-seed 9001`. This mode deduplicates
+images across both lists, ranks their dataset-relative paths by SHA-256 with
+the seed, and assigns approximately 20%
+to validation. If `valid` is absent, it splits the `train` list alone. Both
+backends use the same generated lists. The run saves `train.txt`, `valid.txt`,
+and `dataset_split.json` with the requested and actual fractions, counts, seed,
+and hashes of the source and resulting image identifiers. Repeating the command
+with the same relative image paths and seed yields the same split, even under a
+different mount path.
 Images must reside inside the mounted ad hoc dataset folder for this mode.
-Changing the source train list changes its fingerprint and may change the split.
+Adding or removing an image in either source list changes its fingerprint and
+may change the split.
 `--training-seed` is separate and does not control validation membership.
 
 For example, with an updated Ultralytics SIF and a read-only dataset bind:
